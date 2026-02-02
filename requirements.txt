@@ -1,0 +1,10 @@
+streamlit
+opencv-python
+numpy
+scipy
+matplotlib
+pandas
+pillow
+pymupdf
+pypdf
+pytest

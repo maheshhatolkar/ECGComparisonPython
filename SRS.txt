@@ -1,0 +1,1358 @@
+Project: ECG Graph Extraction and Analysis System 
+1. Introduction 
+1.1 Purpose 
+To develop a software system that can process ECG graph images, interpret the 
+waveform, and extract clinically relevant values (e.g., heart rate, R-R intervals, PQRST 
+durations). 
+1.2 Scope 
+The system will: 
+• Accept ECG graph images as input. 
+• Preprocess and digitize the graph. 
+• Detect and extract key ECG features. 
+• Output extracted values in a structured format. 
+1.3 Definitions, Acronyms, and Abbreviations 
+• ECG: Electrocardiogram 
+• SRS: System Requirement Specification 
+2. Overall Description 
+2.1 User Needs 
+• Clinicians and researchers need to automate the extraction of ECG parameters 
+from scanned or digital ECG graphs. 
+• The system should minimize manual measurement errors and speed up data 
+analysis. 
+2.2 Assumptions and Dependencies 
+• Input images are standard 12-lead ECGs with clear gridlines. 
+• The system will run on Windows/Linux with Python or MATLAB support. 
+3. System Features and Requirements 
+3.1 Functional Requirements 
+3.1.1 Input Handling 
+• The system shall accept ECG graph images in common formats (JPEG, PNG, 
+PDF). 
+• The system shall validate image quality and provide feedback if the image is 
+unsuitable. 
+
+3.1.2 Preprocessing 
+• The system shall enhance image quality (denoising, contrast adjustment). 
+• The system shall detect and correct image skew or rotation. 
+3.1.3 Graph Digitization 
+• The system shall detect gridlines and calibrate time and amplitude axes. 
+• The system shall trace the ECG waveform accurately. 
+3.1.4 Feature Extraction 
+• The system shall identify and mark P , Q, R, S, and T waves. 
+• The system shall calculate R-R intervals, heart rate, and other relevant metrics. 
+• The system shall export results in CSV or JSON format. 
+3.1.5 User Interface 
+The system shall provide a simple GUI or command-line interface for input and 
+output.3.1.5 User Interface (Detailed) 
+Overview 
+The user interface (UI) should be intuitive and accessible for both clinicians and 
+researchers, supporting efficient workflow and minimizing training needs. The UI can be 
+implemented as either a graphical user interface (GUI) or a command-line interface 
+(CLI), depending on user preference and deployment environment. 
+A. Graphical User Interface (GUI) Requirements 
+• Dashboard/Home Screen 
+o Presents a clear overview with options to upload ECG images, view recent 
+analyses, and access help/documentation. 
+o Displays system status and recent notifications (e.g., processing errors, 
+updates). 
+• Image Upload Module 
+o Allows users to select and upload ECG graph images in supported 
+formats (JPEG, PNG, PDF). 
+o Provides drag-and-drop functionality and file browser integration. 
+o Validates image quality and format before processing, displaying clear 
+error messages if issues are detected. 
+• Processing and Visualization 
+o Shows a progress indicator during image analysis. 
+o Displays the original ECG image alongside the digitized waveform and 
+detected features (P , Q, R, S, T points) for visual verification. 
+o Allows users to zoom, pan, and toggle overlays (e.g., gridlines, feature 
+markers). 
+
+• Results Display 
+o Presents extracted values (heart rate, R-R intervals, PQRST durations, 
+etc.) in a structured table. 
+o Enables export of results in CSV or JSON format. 
+o Offers a summary report view and the option to download or print results. 
+• Error Handling and Logging 
+o Clearly communicates any processing errors or warnings. 
+o Provides access to logs for troubleshooting and traceability. 
+• Help and Support 
+o Includes tooltips, user guides, and links to documentation. 
+o Offers contact/support options for technical assistance. 
+B. Command-Line Interface (CLI) Requirements 
+• Simple Command Structure 
+o Users can specify input files, output formats, and processing options via 
+command-line arguments. 
+o Example: ecg_extractor --input ecg1.png --output results.csv --show-plot 
+• Feedback and Logging 
+o Displays real-time progress and status messages. 
+o Outputs errors and warnings in a clear, readable format. 
+o Generates log files for each session. 
+• Batch Processing 
+High-Level System Architecture Overview 
+1. Architectural Style 
+The system follows a modular, pipeline-based 
+architecture with clear separation between: 
+• Input & Presentation Layer 
+• Processing & Analysis Layer 
+• Comparison & Visualization Layer 
+• Persistence (Database & Storage) Layer 
+This separation ensures: 
+• Scalability and maintainability 
+• Independent evolution of UI, analysis algorithms, 
+and storage 
+• Traceability and data integrity (critical for medical 
+data) 
+
+2. Major Architectural Components 
+2.1 User Interface Layer 
+Purpose:\ Provides interaction points for clinicians and 
+researchers. 
+Responsibilities: 
+• Upload ECG images (JPEG, PNG, PDF) 
+• Enter metadata: 
+o Patient ID (with auto-suggestions) 
+o ECG date/time 
+o Possible root cause 
+o Time of root cause 
+• Trigger ECG analysis 
+• Browse stored ECG records 
+• Select two ECGs for comparison, each from stored records or new uploads 
+• View visualizations and export results 
+Interfaces: 
+• Graphical User Interface (GUI), or 
+• Command-Line Interface (CLI) 
+Outputs: 
+• User inputs 
+• Analysis and comparison requests 
+• Export actions (CSV / JSON) 
+2.2 Input & Preprocessing Module 
+Purpose:\ Transforms raw ECG images into a form 
+suitable for analysis. 
+Responsibilities: 
+• Image validation (format, resolution, quality) 
+• Noise reduction and contrast enhancement 
+• Skew and rotation correction 
+• Gridline detection 
+• Axis calibration (time and amplitude) 
+Outputs: 
+• Cleaned ECG image 
+• Calibration parameters: 
+
+o ms per pixel 
+o mV per pixel 
+2.3 ECG Digitization & Feature Extraction Module 
+Purpose:\ Converts ECG images into digitized signals 
+and extracts clinical features. 
+Responsibilities: 
+• Waveform tracing from grid-based ECG image 
+• Lead identification (if applicable) 
+• Detection of ECG features: 
+o P , Q, R, S, T points 
+• Computation of metrics: 
+o Heart rate 
+o R–R intervals 
+o PR interval 
+o QRS duration 
+o QT / QTc (if supported) 
+o ST deviation (if supported) 
+Outputs: 
+• Digitized ECG waveform(s) 
+• Structured analysis values (numeric metrics) 
+2.4 ECG Comparison & Delta Visualization Module 
+Purpose:\ Compares two ECGs and highlights clinically 
+meaningful differences. 
+Responsibilities: 
+• Selection of two ECGs with independent sources (stored record or upload for each) 
+• Normalization to a common time/amplitude scale 
+• Temporal alignment: 
+o R-peak alignment (primary) 
+o Cross-correlation (fallback) 
+• Delta computation: 
+o Waveform-level delta (ECG-B − ECG-A) 
+o Feature-level delta 
+• Visualization: 
+o Overlay plot (ECG-A vs ECG-B) 
+o Delta waveform plot 
+o Highlighted change regions 
+• Delta summary generation 
+
+Outputs: 
+• Visual comparison views 
+• Numerical delta metrics 
+• Exportable comparison results 
+2.5 Persistence Layer (Database & Storage) 
+Purpose:\ Provides long-term storage and traceability of 
+ECG analyses. 
+Responsibilities: 
+• Store ECG analysis records, including: 
+o Patient ID 
+o ECG date/time 
+o Possible root cause 
+o Time of root cause 
+o Analysis values 
+• Store original ECG images (unaltered) 
+• Maintain image metadata and integrity checks 
+• Support search and retrieval 
+• Provide data to comparison workflows 
+Storage Strategy: 
+• Embedded database (e.g., SQLite) or configurable 
+external DB 
+• Image storage options: 
+o Database BLOBs, or 
+o File storage with DB reference and hash 
+2.6 Export & Reporting Module 
+Purpose:\ Enables interoperability and downstream 
+analysis. 
+Responsibilities: 
+• Export analysis results (CSV, JSON) 
+• Export comparison delta metrics 
+• Preserve data consistency with stored records 
+3. High-Level Data Flow 
+1. User uploads ECG image 
+
+2. Preprocessing module cleans and calibrates the 
+image 
+3. Digitization module extracts waveform and 
+features 
+4. Analysis results are generated 
+5. User optionally stores results and original image 
+in database 
+6. User selects two ECGs (stored or uploaded) 
+7. Comparison module aligns, computes deltas, and 
+visualizes differences 
+8. Results are displayed and/or exported 
+4. Key Architectural Principles 
+Data Integrity 
+• Original ECG images are never modified 
+• All comparisons use derived digitized signals 
+Modularity 
+• Each module can be tested and improved 
+independently 
+• Enables future enhancements (e.g., real-time 
+ECG, EHR integration) 
+Traceability 
+• Stored records link metadata, analysis results, 
+and original images 
+• Comparison actions are auditable 
+Scalability 
+• Supports single-user desktop deployment 
+• Can be extended to multi-user or server-based 
+setups 
+5. Optional High-Level Architecture Diagram (Textual) 
+[ User Interface ] 
+        | 
+        v 
+[ Image Input & Preprocessing ] 
+        | 
+        v 
+[ ECG Digitization & Feature Extraction ] 
+        | 
+
+        +--------> [ Database & Image Storage ] 
+        | 
+        v 
+[ ECG Comparison & Delta Visualization ] 
+        | 
+        v 
+[ Visualization & Export ] 
+If you want, I can next: ✅ convert this into formal SRS 
+“Overall Description → System Architecture” language,\ 
+✅ generate a block diagram / component diagram, 
+or\How ECG Delta Visualization Works 
+Delta visualization answers the question: 
+“How has this ECG changed compared to 
+another ECG?” 
+The system does this by aligning, normalizing, 
+subtracting, and visually highlighting differences 
+between two ECGs in a way that is clinically 
+interpretable. 
+1. Inputs to Delta Visualization 
+The comparison always starts with two ECGs: 
+• ECG-A (baseline / earlier ECG) 
+• ECG-B (follow-up / later ECG) 
+Each ECG may come from: 
+• A newly uploaded image, or 
+• A stored ECG image from the database (original 
+image preserved). 
+The system uses: 
+• The original ECG image for display and 
+verification 
+• The digitized waveform (already extracted in your 
+pipeline) for computation 
+
+2. Pre-Processing & Normalization (Critical Step) 
+Raw ECG images cannot be compared directly. Before 
+computing differences, the system performs 
+normalization so that both ECGs are on a common 
+scale. 
+2.1 Grid Calibration 
+From your existing digitization step: 
+• Time axis → milliseconds per pixel 
+• Amplitude axis → millivolts per pixel 
+This ensures: 
+1 mm = 40 ms 
+1 mm = 0.1 mV 
+(or the detected equivalent) 
+2.2 Lead Selection (if applicable) 
+• If multiple leads exist, the system compares: 
+o Same lead in both ECGs (e.g., Lead II vs 
+Lead II) 
+• Lead mismatch blocks comparison and triggers a 
+warning. 
+3. Temporal Alignment (Very Important) 
+Two ECGs represent different heartbeats, so they must 
+be aligned in time. 
+The system supports automatic alignment using one of 
+the following: 
+3.1 R-Peak Alignment (Primary) 
+• Detect R-peaks in both signals 
+• Select a representative R-peak (e.g., first stable 
+beat) 
+• Shift ECG-B so its R-peak aligns with ECG-A 
+This ensures: 
+• QRS complexes sit on top of each other 
+
+• PR, ST, and T-wave comparisons are meaningful 
+3.2 Cross-Correlation (Fallback) 
+• Used if R-peak detection is noisy 
+• Maximizes waveform similarity to find best 
+alignment shift 
+4. Delta Computation (Numerical Core) 
+After alignment, the system computes point-wise and 
+feature-wise differences. 
+4.1 Waveform Delta (Sample-Level) 
+For each time sample t: 
+Delta(t) = ECG_B(t) − ECG_A(t) 
+This produces a delta waveform showing: 
+• Positive deflection → increase in amplitude 
+• Negative deflection → decrease 
+4.2 Feature-Level Delta (Clinically Meaningful) 
+The system also computes deltas for extracted ECG 
+features: 
+Feature Delta Example 
+Heart Rate +12 bpm 
+R-R Interval −80 ms 
+PR Interval +20 ms 
+QRS Duration No change 
+QT / QTc +35 ms 
+ST Elevation +0.15 mV 
+Each delta is labeled as: 
+• Increased 
+• Decreased 
+
+• Unchanged (using configurable clinical 
+thresholds) 
+5. Delta Visualization (What the User Sees) 
+5.1 View 1: Overlay Comparison (Primary Clinical View) 
+• ECG-A plotted in blue 
+• ECG-B plotted in red 
+• Shared grid for direct comparison 
+• Feature markers (P , Q, R, S, T) can be toggled 
+ON/OFF 
+✅ Best for: 
+• Shape changes 
+• QRS widening 
+• ST-segment shifts 
+5.2 View 2: Delta Waveform (Difference View) 
+• Single waveform showing ECG_B − ECG_A 
+• Zero line at baseline 
+Visual interpretation: 
+• Flat line → no change 
+• Spikes around QRS → conduction changes 
+• Sustained deviation → ST/T changes 
+✅ Best for: 
+• Subtle changes not obvious in overlay 
+• Quantifying magnitude of change 
+5.3 View 3: Highlighted Change Regions 
+The system highlights waveform sections where: 
+• |Delta| exceeds a clinically relevant threshold 
+Example: 
+• ST segment ≥ ±0.1 mV deviation → highlighted in 
+orange/red 
+• QT prolongation → highlighted duration box 
+
+✅ Best for: 
+• Fast clinical interpretation 
+• Decision support 
+6. Summary Delta Panel (Numbers with Context) 
+Alongside the plots, the system displays: 
+• Metric 
+• ECG-A value 
+• ECG-B value 
+• Delta 
+• Status (↑ ↓ =) 
+Example: 
+Heart Rate:        68 → 82 bpm   (+14 ↑) 
+PR Interval:       160 → 180 ms  (+20 ↑) 
+QRS Duration:      94 → 96 ms    (+2 =) 
+ST Deviation:      0.02 → 0.18mV (+0.16 ↑) 
+7. Traceability & Database Integration 
+When comparison is performed: 
+• The system logs: 
+o Record IDs of both ECGs 
+o Alignment method used 
+o Delta metrics 
+• Comparison results can be exported (CSV/JSON) 
+• Original images remain unchanged and 
+retrievable 
+8. Why This Design Is Clinically Sound 
+This approach: 
+• Preserves original ECGs (legal/medical integrity) 
+• Compares signals only after proper calibration 
+• Aligns heartbeats, not just timestamps 
+• Separates visual inspection from quantitative 
+delta 
+• Scales from research use → clinical review 
+
+(Optional) One Clarifying Question 
+Do you want delta visualization to support: 
+• Single-beat comparison, or 
+• Averaged beat comparison (more noise-robust, 
+commonly used in research)? 
+Both are easy to specify, but the SRS should lock one (or 
+both). 
+If you want, I can next: ✅ convert this explanation into 
+pure SRS language, or\ ✅ create a functional block 
+diagram (comparison pipeline), or\✅ Note: I tried 
+finding any internal org policy/templates on storing 
+medical images/PHI in your M365 content, but no 
+relevant results were returned, so the additions below 
+are grounded in your current SRS plus standard SRS 
+practice. 
+SRS Updates (Ready to Paste) 
+1) Update 3.1.7 Database: Store & Maintain ECG Analysis Records 
+Add / Modify: Record Fields (Required) 
+Update FR-3.1.7.2 Record Fields to include the original ECG image: 
+FR-3.1.7.2 Record Fields (Updated — Required)\ Each stored ECG 
+analysis record shall include the following fields: 
+• Patient ID (input from user; list suggestions from previous 
+records) 
+• Date and Time of ECG (input from user) 
+• Possible root cause (input from user) 
+• Time of root cause (input from user) 
+• Analysis values (generated from ECG analysis — e.g., HR, R–R 
+intervals, PQRST durations, etc.) 
+• Original ECG image (stored as the raw input file, preserving 
+original resolution/format; JPEG/PNG/PDF supported) 
+2) Add a New Subsection: 3.1.7.x Image Storage & Retrieval 
+FR-3.1.7.7 Store Original ECG Image (New) 
+• The system shall store the original ECG image file associated 
+with each analysis record. 
+
+• The system shall preserve the image exactly as provided, 
+without modification (bitwise integrity where possible), 
+consistent with the constraint that the original image must not 
+be altered. 
+FR-3.1.7.8 Image Storage Strategy (New) 
+The system shall support at least one of the following storage 
+approaches (implementation-dependent): 
+• Option A: Database BLOB storage — store the image bytes 
+inside the database record. 
+• Option B: Managed file storage with DB reference — store the 
+image in an application-managed folder and store: 
+o file path / URI, 
+o file hash (e.g., SHA-256), 
+o file size, 
+o MIME type/format. 
+(You can state “shall support A or B” to keep flexibility, or “shall 
+support both” if you want stronger requirements.) 
+FR-3.1.7.9 Image Metadata (New) 
+• The system shall store image metadata including: 
+o file format (JPEG/PNG/PDF), 
+o original filename, 
+o image dimensions (if image), 
+o file size, 
+o checksum/hash for integrity validation. 
+FR-3.1.7.10 Retrieve & Display Stored Images (New) 
+• The system shall allow users to retrieve and display the stored 
+original ECG image when viewing an analysis record. 
+• The system shall show the original image alongside the 
+digitized waveform/markers (when available), consistent with 
+the UI’s visualization requirement. 
+FR-3.1.7.11 Use Stored Images in Comparison Workflow (New) 
+• The system shall allow comparison of two ECGs using: 
+o original stored images, and/or 
+o digitized waveforms derived from those stored images, 
+as part of ECG Comparison & Delta Visualization. 
+
+3) Update 3.1.6 ECG Comparison & Delta Visualization (Small 
+Extension) 
+Add this line under input selection: 
+FR-3.1.6.1 Select Two ECG Inputs (Updated) 
+• The system shall allow selecting two ECGs for comparison 
+from uploaded files or stored database images. 
+This ensures the comparison feature directly benefits from storing 
+originals. 
+4) Update Section 5 Constraints (Clarify Integrity) 
+Add: 
+• The system must not alter the original ECG image and shall 
+preserve and store it exactly as provided when database 
+storage is enabled. 
+5) Extend Non-Functional Requirements (Highly Recommended) 
+3.2.x Storage & Data Protection (New / Extension) 
+NFR-Storage-1: Capacity & Performance 
+• The system should handle storing and retrieving original ECG 
+images without degrading interactive usage (e.g., record list 
+loads quickly; images render on-demand). 
+NFR-Integrity-1: Image Integrity 
+• The system shall verify stored image integrity using 
+checksums/hashes on save and retrieval, and flag corruption if 
+detected. 
+NFR-Security-1: Secure Storage (When Enabled) 
+• If database storage is enabled, the system should protect 
+stored images and metadata using: 
+o encryption at rest (recommended), 
+o OS-level access controls, 
+o configurable retention and deletion.\ This extends your 
+existing statement that patient data is not stored unless 
+explicitly requested. 
+
+NFR-Compliance-1: Auditability 
+• The system shall log storage/retrieval actions and record 
+modifications for traceability. 
+6) Update External Interfaces (Section 4) 
+Add under “Input/Output”: 
+• Database Storage Output (New):\ The system shall store 
+analysis records including the original ECG image and 
+associated metadata. 
+Practical Design Note (Optional but Useful in SRS Appendix) 
+To avoid large database files (especially with PDFs), many systems 
+choose: 
+• File storage + DB reference (simpler backups, smaller DB, easy 
+dedup)\ or 
+• BLOB storage (single portable DB file, easy distribution) 
+Both are valid — your SRS can keep both options open. 
+One quick follow-up (so I can word the SRS precisely)Where to place 
+these: Add them under Section 3.1 Functional Requirements (as 3.1.6 
+and 3.1.7) and add the database items under External Interfaces and 
+Non-Functional Requirements as indicated. 
+✅ Add to 3.1 Functional Requirements 
+3.1.6 ECG Comparison & Delta Visualization (New) 
+Overview 
+The system shall support comparing two ECGs (either uploaded images or previously 
+analyzed ECG records) and present the delta both visually and numerically, enabling 
+clinicians and researchers to identify changes over time. 
+Functional Requirements 
+FR-3.1.6.1 Select Two ECG Inputs 
+• The system shall allow the user to select two ECGs for comparison from: 
+o (A) two uploaded ECG images, or 
+o (B) one uploaded ECG image and one stored ECG record, or 
+o (C) two stored ECG records. 
+
+FR-3.1.6.2 Pre-Comparison Normalization 
+• The system shall normalize both ECGs to a common scale using 
+grid/time/amplitude calibration (as per digitization process). 
+• The system shall align ECGs by at least one supported method: 
+o R-peak alignment, or 
+o cross-correlation alignment, or 
+o user-selected anchor point alignment. 
+FR-3.1.6.3 Compute Delta Metrics 
+• The system shall compute and present the delta between ECGs for: 
+o Heart rate 
+o R–R interval statistics (mean, min, max) 
+o P duration, PR interval, QRS duration, QT/QTc (if available) 
+o ST deviation metrics (if supported in feature extraction) 
+• The system shall label each delta as increase/decrease/no change based on 
+configurable thresholds. 
+FR-3.1.6.4 Visual Delta Presentation 
+• The system shall present a comparison view that includes at minimum: 
+1. Overlay view (ECG A vs ECG B plotted together) 
+Difference waveform view (A–B as a delta trace)Note on internal 
+templates/policies: I searched your M365 content for internal 
+testing/acceptance templates specific to this project, but only found an 
+unrelated file (Jun 2025 Topics.xlsx), not an ECG/SRS testing artifact. So 
+the test suite below is derived directly from your SRS requirements. 
+Acceptance Test Cases by Architectural Component 
+A) User Interface Layer (GUI/CLI) 
+AT-UI-01 — Upload Supported ECG File Formats 
+Objective: Verify the UI accepts supported formats and routes them to processing.\ 
+Preconditions: User has access to the UI; sample files exist: ecg.png, ecg.jpg, ecg.pdf.\ 
+Steps: 
+1. Open the UI Home/Dashboard. 
+2. Upload ecg.png. 
+3. Repeat for ecg.jpg and ecg.pdf. Expected Results: 
+• Each file is accepted without format errors. 
+• The UI displays a “processing started” indication (GUI progress indicator or CLI 
+status output).\ FR Mapping: FR-3.1.1 (Input Handling), FR-3.1.5 (UI). 
+
+AT-UI-02 — Reject/Flag Unsuitable Image Quality 
+Objective: Verify UI shows feedback when an ECG image is unsuitable (low resolution, 
+unreadable gridlines, excessive noise).\ Preconditions: A known low-quality ECG 
+image ecg_bad.png.\ Steps: 
+1. Upload ecg_bad.png. 
+2. Attempt to start analysis. Expected Results: 
+• System validates quality and stops or warns appropriately. 
+• UI displays a clear message indicating why the image is unsuitable and what to 
+fix (e.g., “gridlines not detected” , “too blurry”).\ FR Mapping: FR-3.1.1.2 (Validate 
+quality & feedback), FR-3.1.5 (Error handling). 
+AT-UI-03 — Metadata Capture for a New Analysis Record 
+Objective: Verify UI captures required metadata fields before/with storing.\ 
+Preconditions: Database storage is enabled (if feature is gated by a setting).\ Steps: 
+1. Upload a valid ECG. 
+2. Enter: Patient ID, ECG Date/Time, Possible root cause, Time of root cause. 
+3. Run analysis and choose “Save to Database” . Expected Results: 
+• UI accepts inputs (format validated for date/time). 
+• Saved record contains all required metadata fields.\ FR Mapping: FR-3.1.7.2 
+(Record fields), FR-3.1.5 (UI workflow). 
+AT-UI-04 — Patient ID Auto-Suggestion (Typeahead) 
+Objective: Verify Patient ID suggestions are offered from existing stored records.\ 
+Preconditions: Database contains records with Patient IDs like “PAT001”, “PAT002”.\ 
+Steps: 
+1. Start a new record entry. 
+2. Click Patient ID input and type “PAT” . Expected Results: 
+• UI presents a suggestion list containing matching previous IDs. 
+• User can select a suggested Patient ID and it populates the input.\ FR Mapping: 
+FR-3.1.7.3 (Patient ID suggestions). 
+AT-UI-05 — Delta Visualization Screen Accessibility 
+Objective: Verify the comparison workflow is reachable from UI and renders expected 
+views.\ Preconditions: Two ECGs are available (uploaded or stored).\ Steps: 
+1. Select ECG-A and ECG-B (from upload or record list). 
+2. Click “Compare” (GUI) or run compare command (CLI). 
+
+3. Toggle between overlay view and delta view. Expected Results: 
+• UI displays: overlay visualization + delta waveform visualization. 
+• UI provides controls: zoom/pan, toggle markers/gridlines where applicable.\ FR 
+Mapping: FR-3.1.6.2, FR-3.1.6.6.1–6.6.4 (Visualization + interaction). 
+B) Input & Preprocessing Module 
+AT-PP-01 — Skew/Rotation Correction 
+Objective: Verify skewed ECG images are corrected before digitization.\ 
+Preconditions: ecg_skewed.png with known rotation (e.g., ~5–10 degrees).\ Steps: 
+1. Run preprocessing on ecg_skewed.png. 
+2. Observe corrected output or intermediate preview. Expected Results: 
+• Output image is deskewed (gridlines align horizontally/vertically within a defined 
+tolerance). 
+• Processing log notes rotation correction step.\ FR Mapping: FR-3.1.2 
+(Preprocessing: skew/rotation). 
+AT-PP-02 — Gridline Detection & Axis Calibration 
+Objective: Verify preprocessing detects gridlines and generates calibration 
+parameters.\ Preconditions: Standard 12-lead ECG image with clear gridlines.\ Steps: 
+1. Run preprocessing. 
+2. Inspect produced calibration outputs. Expected Results: 
+• Gridlines are detected. 
+• System outputs time and amplitude calibration values (ms/pixel, mV/pixel).\ FR 
+Mapping: FR-3.1.3.1 (Gridline detection + calibration). 
+AT-PP-03 — Noise Reduction / Contrast Enhancement 
+Objective: Verify denoising/contrast improvement is applied to enhance traceability.\ 
+Preconditions: ecg_noisy.png with moderate noise; baseline clean version for 
+comparison (if available).\ Steps: 
+1. Run preprocessing. 
+2. Compare preprocessed output to input (visual inspection or metric if 
+implemented). Expected Results: 
+• Output shows improved readability of waveform and gridlines. 
+• No introduced artifacts that distort waveform continuity (as visually confirmed).\ 
+FR Mapping: FR-3.1.2 (Enhancement). 
+
+C) ECG Digitization & Feature Extraction Module 
+AT-FE-01 — Waveform Tracing Produces Digitized Signal 
+Objective: Verify digitization extracts a continuous waveform trace from the image.\ 
+Preconditions: Valid preprocessed ECG image with clear trace.\ Steps: 
+1. Run digitization. 
+2. Inspect generated signal series output. Expected Results: 
+• A digitized waveform is produced (time series). 
+• Signal length and sampling reflect calibration (time axis mapping).\ FR Mapping: 
+FR-3.1.3.2 (Trace waveform accurately). 
+AT-FE-02 — Detect and Mark P , Q, R, S, T Features 
+Objective: Verify feature detection identifies ECG landmarks.\ Preconditions: ECG 
+with clearly visible PQRST complexes.\ Steps: 
+1. Run feature extraction. 
+2. View plotted waveform with markers (or exported markers list). Expected 
+Results: 
+• P , Q, R, S, T points are identified and marked. 
+• Markers align with the expected waveform morphology (visual verification).\ FR 
+Mapping: FR-3.1.4.1 (Identify/mark PQRST). 
+AT-FE-03 — Compute Core Metrics (HR, RR, Intervals/Durations) 
+Objective: Verify metrics are computed and produced in structured form.\ 
+Preconditions: ECG with stable rhythm; known approximate HR if available (e.g., from 
+printed ECG).\ Steps: 
+1. Run feature extraction. 
+2. Inspect computed outputs. Expected Results: 
+• Heart rate and R–R intervals are computed. 
+• Additional metrics (PR, QRS, QT/QTc if supported) are computed when inputs 
+allow. 
+• Results appear in output structure suitable for CSV/JSON export.\ FR Mapping: 
+FR-3.1.4.2 (Calculate metrics), FR-3.1.4.3 (Export format readiness). 
+AT-FE-04 — Accuracy Threshold Validation (System-Level Acceptance) 
+Objective: Verify feature extraction accuracy meets target.\ Preconditions: A labeled 
+dataset with manual annotations (ground truth) for key points/intervals.\ Steps: 
+
+1. Run extraction on the validation dataset. 
+2. Compare detected features/intervals to ground truth. Expected Results: 
+• Feature extraction meets or exceeds the defined accuracy target (≥95%) against 
+manual annotation methodology.\ FR/NFR Mapping: NFR-Accuracy (≥95%). 
+D) ECG Comparison & Delta Visualization Module 
+AT-DV-01 — Select Two ECGs from Supported Sources 
+Objective: Verify comparison supports upload vs stored combinations.\ 
+Preconditions: (a) one stored ECG record, (b) one new upload OR two stored OR two 
+uploads.\ Steps: 
+1. Compare two uploaded ECGs. 
+2. Compare one uploaded + one stored. 
+3. Compare two stored. Expected Results: 
+• All valid source combinations initiate comparison successfully. 
+• System clearly identifies selected inputs.\ FR Mapping: FR-3.1.6.2.1 (Input 
+selection). 
+AT-DV-02 — Normalization and Alignment Applied Before Delta 
+Objective: Verify normalization and temporal alignment occur prior to delta 
+computation.\ Preconditions: Two ECG waveforms with slight timing offset.\ Steps: 
+1. Run comparison. 
+2. Inspect alignment metadata and overlay alignment quality. Expected Results: 
+• System applies calibration normalization to common units. 
+• System performs alignment using R-peak alignment or cross-correlation 
+(fallback). 
+• Overlay shows aligned cardiac cycles (QRS complexes aligned).\ FR Mapping: 
+FR-3.1.6.3 (Normalization), FR-3.1.6.4 (Alignment). 
+AT-DV-03 — Waveform Delta Computation Correctness 
+Objective: Verify delta waveform equals ECG_B − ECG_A.\ Preconditions: Two simple 
+test signals (or ECG segments) where expected delta at sample points is known.\ 
+Steps: 
+1. Run comparison. 
+2. Export delta waveform values (or inspect at marked timestamps). 
+3. Manually verify several sample points. Expected Results: 
+• For inspected timestamps t, Delta(t) equals ECG_B(t) − ECG_A(t). 
+
+• Delta retains correct units (mV) and time mapping (ms).\ FR Mapping: 
+FR-3.1.6.5.1 (Waveform-level delta). 
+AT-DV-04 — Feature-Level Delta Summary and Classification 
+Objective: Verify feature deltas and increase/decrease/no change classification.\ 
+Preconditions: Two ECGs with known differences (e.g., HR increases).\ Steps: 
+1. Run comparison. 
+2. Inspect delta summary panel. Expected Results: 
+• Panel shows ECG-A value, ECG-B value, delta, and direction indicator for each 
+metric. 
+• Threshold-based classification behaves as configured/default.\ FR Mapping: 
+FR-3.1.6.5.2 (Feature delta), FR-3.1.6.7 (Summary panel). 
+AT-DV-05 — Highlighted Change Regions 
+Objective: Verify regions exceeding thresholds are highlighted.\ Preconditions: A pair 
+of ECGs with a known ST deviation or interval change.\ Steps: 
+1. Run comparison. 
+2. Enable “highlight changes” overlay. Expected Results: 
+• Regions where |delta| exceeds thresholds are highlighted. 
+• Highlighting corresponds to clinically meaningful regions (e.g., ST segment).\ FR 
+Mapping: FR-3.1.6.6.3 (Highlighted changes). 
+AT-DV-06 — Export Comparison Results 
+Objective: Verify export includes deltas and original metric values.\ Preconditions: A 
+completed comparison.\ Steps: 
+1. Export comparison results to CSV . 
+2. Export comparison results to JSON. Expected Results: 
+• Export files contain ECG-A metrics, ECG-B metrics, and computed deltas. 
+• Export succeeds without altering original images or stored records.\ FR 
+Mapping: FR-3.1.6.8.3 (Export). 
+E) Persistence Layer (Database & Image Storage) 
+AT-DB-01 — Create Database and Store Full Record (Including Original Image) 
+Objective: Verify database record creation includes required fields + original ECG 
+image.\ Preconditions: Storage enabled; valid ECG processed.\ Steps: 
+
+1. Enter required metadata fields. 
+2. Run analysis. 
+3. Save record. Expected Results: 
+• Record is created and persists after application restart. 
+• Record includes: Patient ID, ECG date/time, root cause, root cause time, 
+analysis values, and original ECG image association.\ FR Mapping: FR-3.1.7.1 
+(DB maintain), FR-3.1.7.2 (Fields), FR-3.1.7.7 (Store original image). 
+AT-DB-02 — Retrieve Stored Record and Display Original Image 
+Objective: Verify original ECG image retrieval and display alongside results.\ 
+Preconditions: At least one record exists with stored image.\ Steps: 
+1. Search/select a stored record. 
+2. Open the record details view. Expected Results: 
+• Original image loads and displays. 
+• Analysis values load and match stored results.\ FR Mapping: FR-3.1.7.10 
+(Retrieve & display images), FR-3.1.7.4 (Search/retrieve). 
+AT-DB-03 — Image Integrity Validation (Hash/Checksum) 
+Objective: Verify stored image integrity checks detect corruption.\ Preconditions: 
+Image metadata includes checksum/hash; controlled test environment can simulate 
+tampering/corruption.\ Steps: 
+1. Save a record with image. 
+2. Modify stored image bytes (or referenced file) outside the system. 
+3. Attempt retrieval/display. Expected Results: 
+• System detects mismatch via stored hash and flags integrity failure. 
+• UI shows error/warning and logs the event.\ FR/NFR Mapping: FR-3.1.7.9 (Image 
+metadata), NFR-Integrity-1 (Integrity checks). 
+AT-DB-04 — Storage Constraint: Do Not Store Patient Data Unless Enabled 
+Objective: Verify storage is not performed when user has not enabled it.\ 
+Preconditions: Storage setting disabled (default).\ Steps: 
+1. Run analysis with metadata filled. 
+2. Attempt to close and reopen app; search for record. Expected Results: 
+• No record is stored unless user explicitly enabled/confirmed storage. 
+• UI reflects storage disabled state (e.g., “Save” disabled or prompts to enable).\ 
+FR Mapping: FR-3.1.7.6 (Storage constraint), Security requirement “shall not 
+store patient data unless explicitly requested. ” 
+
+AT-DB-05 — Use Stored Images in Comparison Workflow 
+Objective: Verify delta visualization works when both ECGs are loaded from stored 
+records/images.\ Preconditions: Two stored records exist with associated original 
+images.\ Steps: 
+1. Select two stored records. 
+2. Launch comparison. Expected Results: 
+• Comparison completes using derived digitized signals from stored images. 
+• Original images remain unchanged.\ FR Mapping: FR-3.1.7.11 (Stored images in 
+comparison), FR-3.1.6. * (Comparison workflow), Constraint “must not alter 
+original ECG image. ” 
+F) Export & Reporting Module 
+AT-EX-01 — Export Analysis Results in CSV 
+Objective: Verify CSV export contains extracted values in structured format.\ 
+Preconditions: A completed analysis exists.\ Steps: 
+1. Export results to CSV . 
+2. Open CSV and inspect columns/values. Expected Results: 
+• CSV exists and includes required analysis values (HR, RR intervals, durations 
+where supported). 
+• Values match what was displayed in UI.\ FR Mapping: FR-3.1.4.3 (Export 
+CSV/JSON). 
+AT-EX-02 — Export Analysis Results in JSON 
+Objective: Verify JSON export structure and completeness.\ Preconditions: A 
+completed analysis exists.\ Steps: 
+1. Export results to JSON. 
+2. Validate JSON parse and inspect keys. Expected Results: 
+• JSON is valid and parseable. 
+• Contains analysis values and any associated metadata as specified by export 
+design. 
+• Matches displayed results.\ FR Mapping: FR-3.1.4.3 (Export CSV/JSON). 
+AT-EX-03 — Export Comparison (Delta) Results 
+Objective: Verify comparison export includes both ECG values and deltas.\ 
+Preconditions: A completed comparison exists.\ Steps: 
+
+1. Export comparison output to CSV/JSON. 
+2. Inspect exported structure. Expected Results: 
+• Export includes: ECG-A metrics, ECG-B metrics, deltas, and (if specified) 
+alignment method metadata. 
+• Export does not alter stored images/records.\ FR Mapping: FR-3.1.6.8.3 (Export 
+delta results). 
+Cross-Cutting Architecture Acceptance Tests (Optional but Strong) 
+These validate architectural qualities that span modules. 
+AT-ARCH-01 — Performance Bound for Standard ECG Analysis 
+Objective: Confirm processing time meets performance requirement.\ Steps: Run 
+analysis on a standard ECG and measure elapsed time.\ Expected: Completes under 
+the target (e.g., <30 seconds for standard ECG).\ NFR Mapping: Performance 
+requirement. 
+AT-ARCH-02 — Original ECG Image Immutability 
+Objective: Ensure original ECG is never modified across pipeline.\ Steps: Compute 
+hash of input image → run full workflow → re-hash stored/original image bytes.\ 
+Expected: Hash matches; any derived images are stored separately or not overwriting 
+original.\ Constraint Mapping: “must not alter the original ECG image.” 
+One concise follow-up (only if you want me to finalize thresholds precisely)It is written 
+in normative, implementation-agnostic style, suitable for inclusion under Section 2: 
+Overall Description or as a dedicated System Architecture section in your SRS. 
+2. Overall System Architecture 
+2.1 Architectural Overview 
+The system shall adopt a modular, layered architecture to support ECG image 
+processing, feature extraction, data storage, comparison, and visualization.\ The 
+architecture shall separate concerns across well-defined components to ensure 
+maintainability, scalability, traceability, and data integrity, which are critical for 
+medical data processing systems. 
+The system architecture shall consist of the following primary layers: 
+• User Interface Layer 
+• Processing & Analysis Layer 
+• Comparison & Visualization Layer 
+• Persistence Layer (Database & Storage) 
+• Export & Reporting Layer 
+
+2.2 Architectural Style 
+AR-2.2.1\ The system shall follow a pipeline-based processing architecture, where 
+ECG data flows sequentially through preprocessing, digitization, analysis, and optional 
+comparison stages. 
+AR-2.2.2\ Each architectural component shall be logically independent and interact 
+with other components through clearly defined interfaces. 
+AR-2.2.3\ The architecture shall support future extensibility, including additional ECG 
+features, comparison methods, or external system integration, without requiring major 
+redesign. 
+2.3 Major Architectural Components 
+2.3.1 User Interface Layer 
+Purpose\ The User Interface (UI) Layer shall provide interaction mechanisms for 
+clinicians and researchers to operate the system. 
+Responsibilities 
+• Accept ECG image uploads (JPEG, PNG, PDF) 
+• Collect user-entered metadata: 
+o Patient ID (with suggestions from existing records) 
+o Date and time of ECG 
+o Possible root cause 
+o Time of root cause 
+• Initiate ECG analysis and comparison workflows 
+• Display original ECG images, digitized waveforms, and analysis results 
+• Enable selection of two ECGs for delta visualization 
+• Support export of results 
+Interfaces 
+• Graphical User Interface (GUI), and/or 
+• Command-Line Interface (CLI) 
+2.3.2 Input & Preprocessing Module 
+Purpose\ The Input & Preprocessing Module shall transform raw ECG images into a 
+calibrated form suitable for digitization and analysis. 
+Responsibilities 
+• Validate ECG image format, resolution, and quality 
+• Perform noise reduction and contrast enhancement 
+• Detect and correct image skew or rotation 
+
+• Detect ECG gridlines 
+• Calibrate time and amplitude axes 
+Outputs 
+• Preprocessed ECG image 
+• Calibration parameters (milliseconds per pixel, millivolts per pixel) 
+2.3.3 ECG Digitization & Feature Extraction Module 
+Purpose\ This module shall convert preprocessed ECG images into digitized signals 
+and extract clinically relevant features. 
+Responsibilities 
+• Trace ECG waveforms from grid-based images 
+• Identify ECG leads where applicable 
+• Detect ECG waveform components: 
+o P , Q, R, S, and T points 
+• Compute analysis metrics, including but not limited to: 
+o Heart rate 
+o R-R intervals 
+o PR interval 
+o QRS duration 
+o QT / QTc interval (if supported) 
+o ST deviation metrics (if supported) 
+Outputs 
+• Digitized ECG waveform(s) 
+• Structured analysis values 
+2.3.4 ECG Comparison & Delta Visualization Module 
+Purpose\ The ECG Comparison & Delta Visualization Module shall enable comparison 
+of two ECGs and highlight changes over time. 
+Responsibilities 
+• Accept two ECG inputs (uploaded or stored) 
+• Normalize ECGs to a common time and amplitude scale 
+• Perform temporal alignment of ECG waveforms 
+• Compute waveform-level and feature-level deltas 
+• Generate visual comparison outputs: 
+o Overlay visualization 
+o Delta waveform visualization 
+o Highlighted change regions 
+
+• Generate numerical delta summaries 
+Outputs 
+• Visual comparison views 
+• Delta metrics 
+• Exportable comparison results 
+2.3.5 Persistence Layer (Database & Image Storage) 
+Purpose\ The Persistence Layer shall provide long-term storage and retrieval of ECG 
+analysis data and associated original images. 
+Responsibilities 
+• Store ECG analysis records, including: 
+o Patient ID 
+o Date and time of ECG 
+o Possible root cause 
+o Time of root cause 
+o Analysis values 
+• Store original ECG images without modification 
+• Maintain image metadata and integrity information 
+• Support search, retrieval, and record selection for comparison 
+• Provide stored data to analysis and comparison workflows 
+Storage Strategy 
+• Embedded database (e.g., SQLite) or configurable external database 
+• ECG images stored as: 
+o Database BLOBs, or 
+o Managed file storage with database references and integrity hashes 
+2.3.6 Export & Reporting Module 
+Purpose\ The Export & Reporting Module shall enable interoperability and offline 
+analysis. 
+Responsibilities 
+• Export ECG analysis results in CSV or JSON format 
+• Export comparison and delta metrics 
+• Ensure exported data is consistent with stored records 
+2.4 High-Level Data Flow 
+AR-2.4.1\ The system shall process ECG data according to the following high-level flow: 
+
+1. User uploads an ECG image and enters metadata 
+2. The image is preprocessed and calibrated 
+3. The ECG waveform is digitized and analyzed 
+4. Analysis results are generated and displayed 
+5. The user may store the analysis and original image in the database 
+6. The user may select two ECGs for comparison 
+7. Delta visualization and comparison results are generated 
+8. Results are displayed and/or exported 
+2.5 Architectural Constraints and Principles 
+2.5.1 Data Integrity 
+• The system shall not alter original ECG images at any stage. 
+• All comparisons shall be performed on derived digitized data. 
+2.5.2 Modularity 
+• Each architectural component shall be independently testable and replaceable. 
+2.5.3 Traceability 
+• Stored records shall link metadata, analysis results, and original images. 
+• Comparison operations shall be auditable. 
+2.5.4 Scalability 
+• The architecture shall support single-user desktop deployment and allow future 
+extension to multi-user or server-based deployments. 
+✅ This section is: 
+• SRS-compliant and review-ready 
+• Clear for developers, testers, and reviewers 
+• Fully aligned with your functional requirements and delta visualization design 
+If you want next, I can: ✅ add architecture acceptance criteria,\ ✅ generate a UML 
+component diagram description, or\The wording is normative (“shall”), testable, and 
+aligned with what you’ve already defined for preprocessing, feature extraction, 
+visualization, and database storage. 
+3.1.6 ECG Comparison & Delta Visualization 
+3.1.6.1 Overview 
+The system shall support comparison of two ECGs and provide delta visualization, 
+enabling users to identify and assess changes between ECG recordings over time.\ The 
+
+comparison shall include both visual and numerical representations of differences 
+after proper normalization and alignment of ECG signals. 
+3.1.6.2 Input Selection 
+FR-3.1.6.2.1\ The system shall allow the user to select two ECGs for comparison from 
+the following sources: 
+• two newly uploaded ECG images, or 
+• one uploaded ECG image and one stored ECG record, or 
+• two stored ECG records from the database. 
+FR-3.1.6.2.2\ Each selected ECG shall be associated with: 
+• its original ECG image, and 
+• its digitized waveform derived from the preprocessing and digitization pipeline. 
+3.1.6.3 Pre-Comparison Normalization 
+FR-3.1.6.3.1\ The system shall normalize both ECGs to a common scale prior to 
+comparison using grid-based calibration derived during digitization: 
+• time axis calibration (milliseconds per pixel), and 
+• amplitude axis calibration (millivolts per pixel). 
+FR-3.1.6.3.2\ Where multiple leads are present, the system shall compare only 
+matching leads between the two ECGs.\ If a lead mismatch occurs, the system shall 
+prevent comparison and notify the user. 
+3.1.6.4 Temporal Alignment 
+FR-3.1.6.4.1\ The system shall temporally align the two ECG waveforms before delta 
+computation. 
+FR-3.1.6.4.2\ The system shall support at least one of the following alignment methods: 
+• R-peak alignment (primary method), or 
+• waveform cross-correlation (fallback method). 
+FR-3.1.6.4.3\ The selected alignment method shall ensure that corresponding cardiac 
+cycles are aligned to allow meaningful comparison of ECG features. 
+3.1.6.5 Delta Computation 
+3.1.6.5.1 Waveform-Level Delta 
+FR-3.1.6.5.1.1\ After alignment, the system shall compute a waveform-level delta 
+signal defined as the point-wise difference between the two ECG waveforms: 
+
+Delta(t) = ECG_B(t) − ECG_A(t) 
+FR-3.1.6.5.1.2\ The delta signal shall retain the same time and amplitude units as the 
+normalized ECGs. 
+3.1.6.5.2 Feature-Level Delta 
+FR-3.1.6.5.2.1\ The system shall compute deltas for extracted ECG features, including 
+at minimum: 
+• heart rate, 
+• R-R interval statistics, 
+• P wave duration (if available), 
+• PR interval, 
+• QRS duration, 
+• QT / QTc interval (if available), 
+• ST deviation metrics (if supported). 
+FR-3.1.6.5.2.2\ For each feature, the system shall calculate: 
+• value from ECG-A, 
+• value from ECG-B, 
+• numerical delta, 
+• delta classification (increase, decrease, or no change). 
+FR-3.1.6.5.2.3\ Delta classification thresholds shall be configurable or based on 
+clinically relevant default thresholds. 
+3.1.6.6 Delta Visualization 
+FR-3.1.6.6.1 Overlay Visualization 
+The system shall present an overlay view showing: 
+• ECG-A and ECG-B plotted on the same calibrated grid, 
+• distinct visual styles (e.g., colors) for each ECG, 
+• optional visualization of detected ECG features (P , Q, R, S, T points). 
+FR-3.1.6.6.2 Delta Waveform Visualization 
+The system shall display a delta waveform view that: 
+• plots the computed delta signal against time, 
+• includes a zero baseline reference, 
+• visually distinguishes positive and negative deviations. 
+FR-3.1.6.6.3 Highlighted Change Regions 
+
+The system shall highlight waveform regions where the absolute delta exceeds 
+predefined thresholds, including but not limited to: 
+• ST-segment deviations, 
+• prolonged or shortened intervals. 
+FR-3.1.6.6.4 Interaction Controls 
+The visualization shall support: 
+• zooming and panning, 
+• toggling gridlines and markers, 
+• switching between overlay and delta views. 
+3.1.6.7 Delta Summary Panel 
+FR-3.1.6.7.1\ The system shall display a summary panel presenting feature-level 
+comparison results, including: 
+• ECG-A value, 
+• ECG-B value, 
+• delta value, 
+• direction indicator (increase, decrease, unchanged). 
+3.1.6.8 Data Integrity & Traceability 
+FR-3.1.6.8.1\ The system shall not modify the original ECG images during the 
+comparison process. 
+FR-3.1.6.8.2\ The system shall record comparison metadata, including: 
+• identifiers of both ECG records, 
+• alignment method used, 
+• computed delta metrics. 
+FR-3.1.6.8.3\ The system shall allow export of delta analysis results in CSV or JSON 
+format. 
+3.1.6.9 Acceptance Criteria (Suggested) 
+• User can select two ECGs for comparison. 
+• The system produces: 
+o an overlay visualization, 
+o a delta waveform visualization, 
+o highlighted change regions, 
+o a numerical comparison summary. 
+• Results can be exported without altering original data. 
+
+✅ This SRS section is: 
+• Clinically defensible 
+• Implementation-agnostic 
+• Verification-friendly (testable requirements) 
+• Fully aligned with your database and image-storage additions 
+If you want, I can next: ✅ compress this into a short executive SRS version, or\ ✅ 
+generate UML / block diagram text, or\The wording is normative (“shall”), testable, 
+and aligned with what you’ve already defined for preprocessing, feature extraction, 
+visualization, and database storage. 
+3.1.6 ECG Comparison & Delta Visualization 
+3.1.6.1 Overview 
+The system shall support comparison of two ECGs and provide delta visualization, 
+enabling users to identify and assess changes between ECG recordings over time.\ The 
+comparison shall include both visual and numerical representations of differences 
+after proper normalization and alignment of ECG signals. 
+3.1.6.2 Input Selection 
+FR-3.1.6.2.1\ The system shall allow the user to select two ECGs for comparison from 
+the following sources: 
+• two newly uploaded ECG images, or 
+• one uploaded ECG image and one stored ECG record, or 
+• two stored ECG records from the database. 
+FR-3.1.6.2.2\ Each selected ECG shall be associated with: 
+• its original ECG image, and 
+• its digitized waveform derived from the preprocessing and digitization pipeline. 
+3.1.6.3 Pre-Comparison Normalization 
+FR-3.1.6.3.1\ The system shall normalize both ECGs to a common scale prior to 
+comparison using grid-based calibration derived during digitization: 
+• time axis calibration (milliseconds per pixel), and 
+• amplitude axis calibration (millivolts per pixel). 
+FR-3.1.6.3.2\ Where multiple leads are present, the system shall compare only 
+matching leads between the two ECGs.\ If a lead mismatch occurs, the system shall 
+prevent comparison and notify the user. 
+
+3.1.6.4 Temporal Alignment 
+FR-3.1.6.4.1\ The system shall temporally align the two ECG waveforms before delta 
+computation. 
+FR-3.1.6.4.2\ The system shall support at least one of the following alignment methods: 
+• R-peak alignment (primary method), or 
+• waveform cross-correlation (fallback method). 
+FR-3.1.6.4.3\ The selected alignment method shall ensure that corresponding cardiac 
+cycles are aligned to allow meaningful comparison of ECG features. 
+3.1.6.5 Delta Computation 
+3.1.6.5.1 Waveform-Level Delta 
+FR-3.1.6.5.1.1\ After alignment, the system shall compute a waveform-level delta 
+signal defined as the point-wise difference between the two ECG waveforms: 
+Delta(t) = ECG_B(t) − ECG_A(t) 
+FR-3.1.6.5.1.2\ The delta signal shall retain the same time and amplitude units as the 
+normalized ECGs. 
+3.1.6.5.2 Feature-Level Delta 
+FR-3.1.6.5.2.1\ The system shall compute deltas for extracted ECG features, including 
+at minimum: 
+• heart rate, 
+• R-R interval statistics, 
+• P wave duration (if available), 
+• PR interval, 
+• QRS duration, 
+• QT / QTc interval (if available), 
+• ST deviation metrics (if supported). 
+FR-3.1.6.5.2.2\ For each feature, the system shall calculate: 
+• value from ECG-A, 
+• value from ECG-B, 
+• numerical delta, 
+• delta classification (increase, decrease, or no change). 
+FR-3.1.6.5.2.3\ Delta classification thresholds shall be configurable or based on 
+clinically relevant default thresholds. 
+
+3.1.6.6 Delta Visualization 
+FR-3.1.6.6.1 Overlay Visualization 
+The system shall present an overlay view showing: 
+• ECG-A and ECG-B plotted on the same calibrated grid, 
+• distinct visual styles (e.g., colors) for each ECG, 
+• optional visualization of detected ECG features (P , Q, R, S, T points). 
+FR-3.1.6.6.2 Delta Waveform Visualization 
+The system shall display a delta waveform view that: 
+• plots the computed delta signal against time, 
+• includes a zero baseline reference, 
+• visually distinguishes positive and negative deviations. 
+FR-3.1.6.6.3 Highlighted Change Regions 
+The system shall highlight waveform regions where the absolute delta exceeds 
+predefined thresholds, including but not limited to: 
+• ST-segment deviations, 
+• prolonged or shortened intervals. 
+FR-3.1.6.6.4 Interaction Controls 
+The visualization shall support: 
+• zooming and panning, 
+• toggling gridlines and markers, 
+• switching between overlay and delta views. 
+3.1.6.7 Delta Summary Panel 
+FR-3.1.6.7.1\ The system shall display a summary panel presenting feature-level 
+comparison results, including: 
+• ECG-A value, 
+• ECG-B value, 
+• delta value, 
+• direction indicator (increase, decrease, unchanged). 
+
+3.1.6.8 Data Integrity & Traceability 
+FR-3.1.6.8.1\ The system shall not modify the original ECG images during the 
+comparison process. 
+FR-3.1.6.8.2\ The system shall record comparison metadata, including: 
+• identifiers of both ECG records, 
+• alignment method used, 
+• computed delta metrics. 
+FR-3.1.6.8.3\ The system shall allow export of delta analysis results in CSV or JSON 
+format. 
+3.1.6.9 Acceptance Criteria (Suggested) 
+• User can select two ECGs for comparison. 
+• The system produces: 
+o an overlay visualization, 
+o a delta waveform visualization, 
+o highlighted change regions, 
+o a numerical comparison summary. 
+• Results can be exported without altering original data. 
+✅ This SRS section is: 
+• Clinically defensible 
+• Implementation-agnostic 
+• Verification-friendly (testable requirements) 
+• Fully aligned with your database and image-storage additions 
+2. If you want, I can next: ✅ compress this into a short executive SRS 
+version, or\ ✅ generate UML / block diagram text, or\ 
+3. Highlighted change regions on waveform where delta exceeds threshold 
+• The system shall support zoom/pan and toggling overlays (gridlines, markers), 
+consistent with existing visualization features. 
+FR-3.1.6.5 Export Comparison Output 
+• The system shall export comparison results including both sets of metrics and 
+deltas in CSV/JSON. 
+Acceptance Criteria (Suggested) 
+• Users can select two ECGs and obtain: 
+o a visible overlay plot, 
+o a delta trace, 
+
+o a delta metrics summary, 
+o and an export file (CSV/JSON). 
+3.1.7 Database: Store & Maintain ECG Analysis Records (New) 
+Overview 
+The system shall provide a persistent database to store ECG analysis outcomes and 
+clinical context fields entered by the user, enabling search, retrieval, and longitudinal 
+comparison. 
+Functional Requirements 
+FR-3.1.7.1 Create and Maintain Database 
+• The system shall create and maintain a database for ECG analysis records. 
+• The system shall support CRUD operations (create, read, update, delete) for 
+analysis records. 
+FR-3.1.7.2 Record Fields (Required) Each stored ECG analysis record shall include the 
+following fields: 
+• Patient ID (input from user; suggestions from previous records) 
+• Date and Time of ECG (input from user) 
+• Possible root cause (input from user) 
+• Time of root cause (input from user) 
+• Analysis values (generated from ECG analysis — e.g., HR, RR, PQRST durations, 
+etc.) 
+FR-3.1.7.3 Patient ID Suggestions 
+• The system shall provide auto-suggestions for Patient ID based on previously 
+stored records (typeahead/autocomplete). 
+• The system shall prevent accidental duplication by warning when a Patient ID 
+closely matches an existing ID. 
+FR-3.1.7.4 Search & Retrieval 
+• The system shall allow searching stored records by: 
+o Patient ID (exact and partial match), 
+o ECG date/time range, 
+o root cause keyword, 
+o abnormal metric flags (optional enhancement). 
+• The system shall allow users to open any stored record and view: 
+o entered metadata, 
+o extracted analysis values, 
+o associated comparison options. 
+
+FR-3.1.7.5 Link Records to Comparison 
+• The system shall allow selecting two stored records for the comparison workflow 
+described in 3.1.6. 
+FR-3.1.7.6 Data Storage Constraint Alignment 
+• The system shall not store patient data unless explicitly requested/enabled 
+by the user (e.g., “Enable Database Storage” setting). 
+✅ Add to 3.1.5 User Interface (Detailed) (Small Extension) 
+Add a new “Records” module 
+Add these bullets under GUI Requirements: 
+Records & Database Module 
+• Provides a searchable list of previous ECG analyses. 
+• Allows creating a new record by entering: 
+o Patient ID (with suggestions), 
+o ECG date/time, 
+o possible root cause, 
+o time of root cause. 
+• Allows opening a record to view extracted analysis values and initiate “Compare 
+with… ” workflow. 
+• Allows selecting two records and launching the delta visualization screen. 
+✅ Add to 4. External Interfaces 
+Database Interface (New) 
+• The system shall support a local embedded database (e.g., SQLite) or 
+configurable external DB (optional enhancement). 
+• Data exported remains CSV/JSON as already specified. 
+✅ Update 3.2 Non-Functional Requirements (Recommended) 
+3.2.5 Data Integrity & Auditability (New) 
+• The system shall log creation/modification of analysis records for traceability. 
+3.2.6 Security & Privacy (Update) 
+• If database storage is enabled, the system shall: 
+o encrypt stored records at rest (recommended), 
+o restrict access via OS/user permissions, 
+
+o avoid storing raw patient identifiers beyond “Patient ID” unless explicitly 
+added by user, 
+o provide delete/export controls for user-managed retention.\ This extends 
+the existing requirement that patient data is not stored unless explicitly 
+requested. 
+3.2.7 Performance (Extension) 
+• The system should compute comparison deltas and render visual overlays within 
+an acceptable interactive latency (e.g., under a few seconds for a standard ECG), 
+in addition to the existing <30s analysis target. 
+Optional: Suggested Minimal Database Schema (Implementation Hint) 
+(Not required in SRS, but useful to include as an appendix if you want.) 
+-- Example schema (appendix-level) 
+CREATE TABLE ecg_analysis_records ( 
+  record_id TEXT PRIMARY KEY, 
+  patient_id TEXT NOT NULL, 
+  ecg_datetime TEXT NOT NULL,           -- ISO 8601 
+  possible_root_cause TEXT, 
+  root_cause_time TEXT,                -- ISO 8601 or partial time 
+  analysis_values_json TEXT NOT NULL,   -- extracted metrics in JSON 
+  created_at TEXT NOT NULL, 
+  updated_at TEXT NOT NULL 
+); 
+ 
+CREATE INDEX idx_patient_id ON ecg_analysis_records(patient_id); 
+CREATE INDEX idx_ecg_datetime ON ecg_analysis_records(ecg_datetime); 
+Note on Enterprise References 
+I attempted to locate any internal docs/policies/templates for medical data storage and 
+compliance in your M365 environment, but no relevant results were found via search. 
+(So the above text is based on your current SRS constraints and standard SRS practice.) 
+o One quick question (to tailor the SRS precisely)Supports processing 
+multiple ECG files in a single command. 
+C. Accessibility and Usability 
+• The UI should follow accessibility standards (e.g., keyboard navigation, screen 
+reader compatibility). 
+• Consistent layout, color schemes, and font choices to enhance readability. 
+• Minimal steps required to complete core tasks (upload, process, export). 
+
+3.2 Non-Functional Requirements 
+3.2.1 Performance 
+• The system should process a standard ECG image in under 30 seconds. 
+3.2.2 Accuracy 
+• The system should achieve at least 95% accuracy in feature extraction compared 
+to manual annotation. 
+3.2.3 Security 
+• The system shall not store patient data unless explicitly requested. 
+3.2.4 Compliance 
+• The system should follow relevant medical device software standards (e.g., FDA 
+guidance, ANSI/AAMI EC11). 
+3.3 Software and Hardware Requirements 
+• Operating System: Windows 10+, Linux (Ubuntu 20.04+) 
+• Programming Language: Python 3.8+ or MATLAB (with Signal Processing Toolbox) 
+• RAM: Minimum 4GB 
+• Disk Space: Minimum 500MB 
+ 
+4. External Interfaces 
+• Input: Image files (JPEG, PNG, PDF) 
+• Output: CSV , JSON files with extracted values 
+5. Constraints 
+• The system must not alter the original ECG image. 
+• The system must log errors and processing steps for traceability. 
+6. Future Enhancements 
+• Support for real-time ECG signal processing. 
+• Integration with electronic health record (EHR) systems. 
+
+ 
+Here’s a mock-up diagram for the GUI of your ECG graph extraction system. It 
+illustrates: 
+• Upload Image Section: A button to browse and upload ECG graph files. 
+• Graph Display Area: Shows the original ECG image with detected PQRST points 
+marked. 
+• Results Panel: Displays extracted values like heart rate, R-R interval, and 
+durations. 
+• Export Button: Allows saving results in CSV or JSON format. 
+ 
+References: 
+• FDA Diagnostic ECG Guidance 
+MATLAB ECG Analysis Example 
