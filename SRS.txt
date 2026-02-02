@@ -78,6 +78,10 @@ o Provides access to logs for troubleshooting and traceability.
 • Help and Support 
 o Includes tooltips, user guides, and links to documentation. 
 o Offers contact/support options for technical assistance. 
+• User Management (Admin Only) 
+o Provides screens to create, update, disable/enable users and assign roles. 
+o Provides a view of audit logs with filtering by user/event type/time range. 
+o Provides configuration controls for session timeout and authentication mode (if configurable). 
 B. Command-Line Interface (CLI) Requirements 
 • Simple Command Structure 
 o Users can specify input files, output formats, and processing options via 
@@ -1324,6 +1328,12 @@ reader compatibility).
 to manual annotation. 
 3.2.3 Security 
 • The system shall not store patient data unless explicitly requested. 
+NFR-Sec-1: Authentication & Authorization 
+If User Management is enabled, the system shall enforce authentication and role-based authorization for protected features. 
+NFR-Sec-2: Credential Protection (If local passwords are used) 
+The system shall not store passwords in plaintext and shall store password verifiers using industry-standard one-way hashing with salt. 
+NFR-Sec-3: Auditability 
+The system shall record security-relevant events in audit logs to support traceability and troubleshooting. 
 3.2.4 Compliance 
 • The system should follow relevant medical device software standards (e.g., FDA 
 guidance, ANSI/AAMI EC11). 

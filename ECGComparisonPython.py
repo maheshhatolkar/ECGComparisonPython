@@ -27,115 +27,626 @@ def ensure_storage():
 	os.makedirs(IMAGE_DIR, exist_ok=True)
 
 
+		conn.execute(
+			"INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+			("schema_version", str(int(version))),
+		)
+
+	def ecg_comparisons_has_foreign_keys(self, conn: sqlite3.Connection) -> bool:
+		try:
+			rows = conn.execute("PRAGMA foreign_key_list(ecg_comparisons)").fetchall()
+		except sqlite3.Error:
+			return False
+		return bool(rows)
+
+	def migrate_db(self, conn: sqlite3.Connection) -> None:
+		current = self.get_db_schema_version(conn)
+		if current >= self._schema_version:
+			return
+
+		# v1 -> v2: ensure ecg_comparisons has foreign keys for cascading deletes.
+		if current < 2:
+			row = conn.execute(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name='ecg_comparisons'",
+			).fetchone()
+			if not row:
+				conn.execute(
+					"""
+				CREATE TABLE IF NOT EXISTS ecg_records (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					patient_id TEXT,
+					ecg_datetime TEXT,
+					root_cause TEXT,
+					root_cause_time TEXT,
+					image_filename TEXT NOT NULL,
+					image_hash TEXT NOT NULL,
+					analysis_json TEXT NOT NULL,
+					created_at TEXT NOT NULL
+				)
+				"""
+			)
+			conn.execute(
+				"""
+				CREATE TABLE IF NOT EXISTS users (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					username TEXT UNIQUE NOT NULL,
+					display_name TEXT,
+					role TEXT NOT NULL,
+					password_hash TEXT NOT NULL,
+					password_salt TEXT NOT NULL,
+					enabled INTEGER NOT NULL DEFAULT 1,
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				)
+				"""
+			)
+			conn.execute(
+				"""
+				CREATE TABLE IF NOT EXISTS ecg_comparisons (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					alignment_method TEXT,
+					delta_json TEXT NOT NULL,
+				)
+				"""
+			)
+			conn.execute(
+				"""
+				CREATE TABLE IF NOT EXISTS audit_logs (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					timestamp TEXT NOT NULL,
+					event_type TEXT NOT NULL,
+					user_id INTEGER,
+					username TEXT,
+					outcome TEXT NOT NULL,
+					details TEXT
+				)
+				"""
+			)
+			conn.execute(
+				"""
+				CREATE TABLE IF NOT EXISTS app_settings (
+					key TEXT PRIMARY KEY,
+					value TEXT NOT NULL
+				)
+				"""
+			)
+
+			self.migrate_db(conn)
+			self.create_indexes(conn)
+			self.seed_default_settings(conn)
+			self.seed_default_admin(conn)
+			conn.execute(
+				"INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+				("schema_version", str(self._schema_version)),
+			)
+
+		return hashlib.sha256(data).hexdigest()
+
+		filename = f"{image_hash[:16]}{ext}"
+		if not os.path.exists(path):
+			with open(path, "wb") as f:
+				f.write(image_bytes)
+		return filename
+
+			return pd.read_sql_query(
+				"SELECT id, patient_id, ecg_datetime, created_at FROM ecg_records ORDER BY created_at DESC",
+				conn,
+			)
+
+			row = conn.execute(
+				"SELECT * FROM ecg_records WHERE id = ?",
+				(record_id,),
+			).fetchone()
+		if not row:
+			return {}
+		columns = [
+			"id",
+			"patient_id",
+			"ecg_datetime",
+			"root_cause",
+			"root_cause_time",
+			"image_filename",
+			"image_hash",
+			"analysis_json",
+			"created_at",
+		]
+		data = dict(zip(columns, row))
+		data["analysis"] = json.loads(data["analysis_json"])
+		return data
+
+		created_at = datetime.utcnow().isoformat()
+			cur = conn.execute(
+				"""
+				INSERT INTO ecg_records (
+					patient_id, ecg_datetime, root_cause, root_cause_time,
+					image_filename, image_hash, analysis_json, created_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				(
+					metadata.get("patient_id"),
+					metadata.get("ecg_datetime"),
+					metadata.get("root_cause"),
+					metadata.get("root_cause_time"),
+					image_filename,
+					image_hash,
+					json.dumps(analysis),
+					created_at,
+				),
+			)
+			return cur.lastrowid
+
+
+		if image_filename:
+			with sqlite3.connect(self._paths.db_path) as conn:
+				count_row = conn.execute(
+					"SELECT COUNT(*) FROM ecg_records WHERE image_filename = ?",
+					(image_filename,),
+				).fetchone()
+			remaining = int(count_row[0]) if count_row else 0
+			if remaining == 0:
+				path = os.path.join(self._paths.image_dir, image_filename)
+				try:
+					if os.path.exists(path):
+						os.remove(path)
+				except OSError:
+					pass
+
+
+
+		rgb = np.array(image)
+		gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+		denoised = cv2.medianBlur(gray, 3)
+		clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+		enhanced = clahe.apply(denoised)
+		return {
+			"gray": gray,
+			"enhanced": enhanced,
+		}
+
+		h, w = enhanced_gray.shape
+		binary = cv2.adaptiveThreshold(
+			enhanced_gray,
+			255,
+			cv2.ADAPTIVE_THRESH_MEAN_C,
+			cv2.THRESH_BINARY_INV,
+			31,
+			7,
+		)
+		horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(30, w // 40), 1))
+		vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(30, h // 40)))
+		horizontal_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel)
+		vertical_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel)
+
+		row_sums = horizontal_lines.sum(axis=1)
+		col_sums = vertical_lines.sum(axis=0)
+		row_peaks, _ = find_peaks(row_sums, distance=max(5, h // 200), prominence=row_sums.max() * 0.2)
+		col_peaks, _ = find_peaks(col_sums, distance=max(5, w // 200), prominence=col_sums.max() * 0.2)
+
+		spacings = []
+		if len(row_peaks) > 2:
+			spacings.extend(np.diff(np.sort(row_peaks)))
+		if len(col_peaks) > 2:
+			spacings.extend(np.diff(np.sort(col_peaks)))
+
+		if not spacings:
+			return None
+		spacing = float(np.median(spacings))
+		if spacing <= 0:
+			return None
+		return spacing
+
+		h, w = enhanced_gray.shape
+		y = np.full(w, np.nan)
+		for x in range(w):
+			col = enhanced_gray[:, x]
+			if col.std() < 5:
+				continue
+			threshold = np.percentile(col, 10)
+			dark_indices = np.where(col <= threshold)[0]
+			if len(dark_indices) == 0:
+				y[x] = np.argmin(col)
+			else:
+				y[x] = int(np.mean(dark_indices))
+
+		y_series = pd.Series(y).interpolate(limit_direction="both")
+		y_filled = y_series.to_numpy()
+		window = max(5, (w // 200) * 2 + 1)
+		y_smooth = savgol_filter(y_filled, window_length=window, polyorder=2)
+		return y_smooth
+
+		baseline = np.median(y_pixels)
+		return (baseline - y_pixels) * mV_per_pixel
+
+		distance = int(200 / ms_per_pixel)
+		distance = max(distance, 1)
+		prominence = max(0.05, float(np.std(signal) * prominence_factor))
+		peaks, _ = find_peaks(signal, distance=distance, prominence=prominence)
+		return peaks
+
+		features = {
+			"p_peaks": [],
+			"q_peaks": [],
+			"r_peaks": r_peaks.tolist(),
+			"s_peaks": [],
+			"t_peaks": [],
+		}
+		samples_per_ms = 1 / ms_per_pixel
+		q_window = int(60 * samples_per_ms)
+		s_window = int(60 * samples_per_ms)
+		p_window = int(200 * samples_per_ms)
+		t_window = int(240 * samples_per_ms)
+
+		for r in r_peaks:
+			q_start = max(r - q_window, 0)
+			q_end = r
+			s_start = r
+			s_end = min(r + s_window, len(signal))
+
+			q_idx = q_start + int(np.argmin(signal[q_start:q_end])) if q_end > q_start else r
+			s_idx = s_start + int(np.argmin(signal[s_start:s_end])) if s_end > s_start else r
+
+			p_start = max(q_idx - p_window, 0)
+			p_end = q_idx
+			t_start = s_idx
+			t_end = min(s_idx + t_window, len(signal))
+
+			p_idx = p_start + int(np.argmax(signal[p_start:p_end])) if p_end > p_start else q_idx
+			t_idx = t_start + int(np.argmax(signal[t_start:t_end])) if t_end > t_start else s_idx
+
+			features["q_peaks"].append(int(q_idx))
+			features["s_peaks"].append(int(s_idx))
+			features["p_peaks"].append(int(p_idx))
+			features["t_peaks"].append(int(t_idx))
+
+		return features
+
+		r_peaks = np.array(features["r_peaks"], dtype=int)
+		if len(r_peaks) >= 2:
+			rr_intervals = np.diff(r_peaks) * ms_per_pixel
+			heart_rate = 60000 / np.mean(rr_intervals)
+		else:
+			rr_intervals = np.array([])
+			heart_rate = None
+
+		def avg_interval(a_list, b_list):
+			if not a_list or not b_list:
+				return None
+			count = min(len(a_list), len(b_list))
+			intervals = (np.array(b_list[:count]) - np.array(a_list[:count])) * ms_per_pixel
+			return float(np.mean(intervals)) if len(intervals) else None
+
+		pr_interval = avg_interval(features["p_peaks"], features["r_peaks"])
+		qrs_duration = avg_interval(features["q_peaks"], features["s_peaks"])
+		qt_interval = avg_interval(features["q_peaks"], features["t_peaks"])
+
+		return {
+			"heart_rate_bpm": float(heart_rate) if heart_rate is not None else None,
+			"rr_intervals_ms": rr_intervals.tolist(),
+			"pr_interval_ms": pr_interval,
+			"qrs_duration_ms": qrs_duration,
+			"qt_interval_ms": qt_interval,
+		}
+
+		ms_per_pixel = 40 / pixels_per_mm
+		mV_per_pixel = 0.1 / pixels_per_mm
+		time_ms = (np.arange(len(signal)) * ms_per_pixel).tolist()
+
+		return {
+			"ms_per_pixel": ms_per_pixel,
+			"mV_per_pixel": mV_per_pixel,
+			"pixels_per_mm": pixels_per_mm,
+			"signal_mV": signal.tolist(),
+			"time_ms": time_ms,
+			"features": features,
+			"metrics": metrics,
+		}
+
+
+		if r_a and r_b:
+			shift = r_b[0] - r_a[0]
+			method = "r-peak"
+		else:
+			corr = np.correlate(signal_b - signal_b.mean(), signal_a - signal_a.mean(), mode="full")
+			shift = int(np.argmax(corr) - (len(signal_a) - 1))
+			method = "cross-correlation"
+
+		if shift > 0:
+			aligned_a = signal_a
+			aligned_b = signal_b[shift:]
+		elif shift < 0:
+			aligned_a = signal_a[-shift:]
+			aligned_b = signal_b
+		else:
+			aligned_a = signal_a
+			aligned_b = signal_b
+
+		min_len = min(len(aligned_a), len(aligned_b))
+		return aligned_a[:min_len], aligned_b[:min_len], method
+
+
+class ECGExporter:
+	def metrics_table(self, metrics: dict) -> pd.DataFrame:
+		rows = []
+		for key, label in [
+			("heart_rate_bpm", "Heart Rate (bpm)"),
+			("pr_interval_ms", "PR Interval (ms)"),
+			("qrs_duration_ms", "QRS Duration (ms)"),
+			("qt_interval_ms", "QT Interval (ms)"),
+		]:
+			rows.append({"Metric": label, "Value": metrics.get(key)})
+		return pd.DataFrame(rows)
+
+	def analysis_to_exports(self, analysis: dict) -> tuple[str, str]:
+		csv_df = self.metrics_table(analysis["metrics"])
+		csv_data = csv_df.to_csv(index=False)
+		json_data = json.dumps(analysis, indent=2)
+		return csv_data, json_data
+
+
+def _db() -> ECGDatabase:
+	return ECGDatabase(StoragePaths.current())
+
+
+def _analyzer() -> ECGAnalyzer:
+	return ECGAnalyzer()
+
+
+def _aligner() -> ECGAligner:
+	return ECGAligner()
+
+
+def _exporter() -> ECGExporter:
+	return ECGExporter()
+
+
+def ensure_storage():
+	"""Ensure on-disk storage exists for images and database."""
+	_db().ensure_storage()
+
+
 def init_db():
 	"""Initialize SQLite database schema if missing."""
-	ensure_storage()
+	_db().init_db()
+
+
+def get_db_schema_version(conn: sqlite3.Connection) -> int:
+	return _db().get_db_schema_version(conn)
+
+
+def set_db_schema_version(conn: sqlite3.Connection, version: int) -> None:
+	_db().set_db_schema_version(conn, version)
+
+
+def ecg_comparisons_has_foreign_keys(conn: sqlite3.Connection) -> bool:
+	return _db().ecg_comparisons_has_foreign_keys(conn)
+
+
+def migrate_db(conn: sqlite3.Connection) -> None:
+	"""Apply lightweight migrations to bring DB schema up to date."""
+	_db().migrate_db(conn)
+
+
+def create_indexes(conn: sqlite3.Connection) -> None:
+	# Performance helpers; safe to run repeatedly.
+	_db().create_indexes(conn)
+
+
+def seed_default_settings(conn: sqlite3.Connection):
+	_db().seed_default_settings(conn)
+
+
+def seed_default_admin(conn: sqlite3.Connection):
+	_db().seed_default_admin(conn)
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+	return _db().get_setting(key, default)
+
+
+def set_setting(key: str, value: str) -> None:
+	_db().set_setting(key, value)
+
+
+def hash_password(password: str, salt: str) -> str:
+	return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+
+def verify_password(password: str, salt: str, password_hash: str) -> bool:
+	return hash_password(password, salt) == password_hash
+
+
+def get_user_by_username(username: str) -> dict | None:
 	with sqlite3.connect(DB_PATH) as conn:
-		conn.execute(
-			"""
-			CREATE TABLE IF NOT EXISTS ecg_records (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				patient_id TEXT,
-				ecg_datetime TEXT,
-				root_cause TEXT,
-				root_cause_time TEXT,
-				image_filename TEXT NOT NULL,
-				image_hash TEXT NOT NULL,
-				analysis_json TEXT NOT NULL,
-				created_at TEXT NOT NULL
-			)
-			"""
-		)
-		conn.execute(
-			"""
-			CREATE TABLE IF NOT EXISTS ecg_comparisons (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				record_a_id INTEGER,
-				record_b_id INTEGER,
-				alignment_method TEXT,
-				delta_json TEXT NOT NULL,
-				created_at TEXT NOT NULL
-			)
-			"""
-		)
+		row = conn.execute(
+			"SELECT id, username, display_name, role, password_hash, password_salt, enabled FROM users WHERE username = ?",
+			(username,),
+		).fetchone()
+	if not row:
+		return None
+	return {
+		"id": row[0],
+		"username": row[1],
+		"display_name": row[2],
+		"role": row[3],
+		"password_hash": row[4],
+		"password_salt": row[5],
+		"enabled": bool(row[6]),
+	}
 
 
-def compute_hash(data: bytes) -> str:
-	"""Compute SHA-256 hash for image deduplication and integrity."""
-	return hashlib.sha256(data).hexdigest()
-
-
-def save_image_bytes(image_bytes: bytes, ext: str) -> str:
-	"""Persist image bytes on disk and return stored filename."""
-	ensure_storage()
-	image_hash = compute_hash(image_bytes)
-	filename = f"{image_hash[:16]}{ext}"
-	path = os.path.join(IMAGE_DIR, filename)
-	if not os.path.exists(path):
-		with open(path, "wb") as f:
-			f.write(image_bytes)
-	return filename
-
-
-def load_records() -> pd.DataFrame:
-	"""Load a summary list of saved ECG records for display."""
+def list_users() -> pd.DataFrame:
 	with sqlite3.connect(DB_PATH) as conn:
 		return pd.read_sql_query(
-			"SELECT id, patient_id, ecg_datetime, created_at FROM ecg_records ORDER BY created_at DESC",
+			"SELECT id, username, display_name, role, enabled, created_at, updated_at FROM users ORDER BY username",
 			conn,
 		)
 
 
+def create_user(username: str, display_name: str, role: str, password: str, enabled: bool = True) -> None:
+	salt = secrets.token_hex(16)
+	password_hash = hash_password(password, salt)
+	now = datetime.utcnow().isoformat()
+	with sqlite3.connect(DB_PATH) as conn:
+		conn.execute(
+			"""
+			INSERT INTO users (username, display_name, role, password_hash, password_salt, enabled, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			""",
+			(username, display_name, role, password_hash, salt, 1 if enabled else 0, now, now),
+		)
+
+
+def update_user(user_id: int, display_name: str, role: str, enabled: bool) -> None:
+	now = datetime.utcnow().isoformat()
+	with sqlite3.connect(DB_PATH) as conn:
+		conn.execute(
+			"""
+			UPDATE users SET display_name = ?, role = ?, enabled = ?, updated_at = ? WHERE id = ?
+			""",
+			(display_name, role, 1 if enabled else 0, now, user_id),
+		)
+
+
+def reset_password(user_id: int, new_password: str) -> None:
+	salt = secrets.token_hex(16)
+	password_hash = hash_password(new_password, salt)
+	now = datetime.utcnow().isoformat()
+	with sqlite3.connect(DB_PATH) as conn:
+		conn.execute(
+			"""
+			UPDATE users SET password_hash = ?, password_salt = ?, updated_at = ? WHERE id = ?
+			""",
+			(password_hash, salt, now, user_id),
+		)
+
+
+def log_audit(event_type: str, outcome: str, user: dict | None = None, details: str | None = None) -> None:
+	with sqlite3.connect(DB_PATH) as conn:
+		conn.execute(
+			"""
+			INSERT INTO audit_logs (timestamp, event_type, user_id, username, outcome, details)
+			VALUES (?, ?, ?, ?, ?, ?)
+			""",
+			(
+				datetime.utcnow().isoformat(),
+				event_type,
+				user.get("id") if user else None,
+				user.get("username") if user else None,
+				outcome,
+				details,
+			),
+		)
+
+
+def list_audit_logs(limit: int = 200) -> pd.DataFrame:
+	with sqlite3.connect(DB_PATH) as conn:
+		return pd.read_sql_query(
+			"SELECT timestamp, event_type, username, outcome, details FROM audit_logs ORDER BY id DESC LIMIT ?",
+			conn,
+			params=(limit,),
+		)
+
+
+def authenticate_user(username: str, password: str) -> dict | None:
+	user = get_user_by_username(username)
+	if not user or not user.get("enabled"):
+		return None
+	if verify_password(password, user["password_salt"], user["password_hash"]):
+		return user
+	return None
+
+
+def is_user_management_enabled() -> bool:
+	return get_setting("user_management_enabled", "false") == "true"
+
+
+def get_session_timeout_minutes() -> int:
+	value = get_setting("session_timeout_minutes", "30")
+	try:
+		return int(value)
+	except ValueError:
+		return 30
+
+
+def user_has_role(roles: list[str]) -> bool:
+	role = st.session_state.get("role")
+	return role in roles
+
+
+def require_roles(roles: list[str]):
+	if not is_user_management_enabled():
+		return
+	if not st.session_state.get("authenticated"):
+		st.warning("Please log in to continue.")
+		st.stop()
+	if not user_has_role(roles):
+		st.error("You do not have permission to access this area.")
+		st.stop()
+
+
+def enforce_session_timeout():
+	if not is_user_management_enabled():
+		return
+	if not st.session_state.get("authenticated"):
+		return
+	last_activity = st.session_state.get("last_activity")
+	if not last_activity:
+		st.session_state["last_activity"] = datetime.utcnow().isoformat()
+		return
+	try:
+		last_ts = datetime.fromisoformat(last_activity)
+	except ValueError:
+		last_ts = datetime.utcnow()
+	minutes = get_session_timeout_minutes()
+	if (datetime.utcnow() - last_ts).total_seconds() > minutes * 60:
+		user = {
+			"id": st.session_state.get("user_id"),
+			"username": st.session_state.get("username"),
+		}
+		log_audit("session_timeout", "success", user)
+		st.session_state.clear()
+		st.warning("Session timed out. Please log in again.")
+		st.stop()
+	st.session_state["last_activity"] = datetime.utcnow().isoformat()
+
+
+def compute_hash(data: bytes) -> str:
+	"""Compute SHA-256 hash for image deduplication and integrity."""
+	return _db().compute_hash(data)
+
+
+def save_image_bytes(image_bytes: bytes, ext: str) -> str:
+	"""Persist image bytes on disk and return stored filename."""
+	return _db().save_image_bytes(image_bytes, ext)
+
+
+def load_records() -> pd.DataFrame:
+	"""Load a summary list of saved ECG records for display."""
+	return _db().load_records()
+
+
+def mask_patient_id(value: str | None) -> str | None:
+	if not value:
+		return value
+	return "***"
+
+
 def load_record(record_id: int) -> dict:
 	"""Load a single ECG record (including analysis payload)."""
-	with sqlite3.connect(DB_PATH) as conn:
-		row = conn.execute(
-			"SELECT * FROM ecg_records WHERE id = ?",
-			(record_id,),
-		).fetchone()
-	if not row:
-		return {}
-	columns = [
-		"id",
-		"patient_id",
-		"ecg_datetime",
-		"root_cause",
-		"root_cause_time",
-		"image_filename",
-		"image_hash",
-		"analysis_json",
-		"created_at",
-	]
-	data = dict(zip(columns, row))
-	data["analysis"] = json.loads(data["analysis_json"])
-	return data
+	return _db().load_record(record_id)
 
 
 def save_record(metadata: dict, image_bytes: bytes, ext: str, analysis: dict) -> int:
 	"""Store ECG metadata, image, and analysis in the database."""
-	image_filename = save_image_bytes(image_bytes, ext)
-	image_hash = compute_hash(image_bytes)
-	created_at = datetime.utcnow().isoformat()
-	with sqlite3.connect(DB_PATH) as conn:
-		cur = conn.execute(
-			"""
-			INSERT INTO ecg_records (
-				patient_id, ecg_datetime, root_cause, root_cause_time,
-				image_filename, image_hash, analysis_json, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			""" ,
-			(
-				metadata.get("patient_id"),
-				metadata.get("ecg_datetime"),
-				metadata.get("root_cause"),
-				metadata.get("root_cause_time"),
-				image_filename,
-				image_hash,
-				json.dumps(analysis),
-				created_at,
-			),
-		)
-		return cur.lastrowid
+	return _db().save_record(metadata, image_bytes, ext, analysis)
+
+
+def delete_record(record_id: int) -> bool:
+	"""Delete an ECG record and any related comparisons.
+
+	Also deletes the associated image file if no other records reference it.
+	Returns True if a record was deleted, False if the record did not exist.
+	"""
+	return _db().delete_record(record_id)
 
 
 def open_pdf_first_page(pdf_bytes: bytes) -> Image.Image:
@@ -164,204 +675,47 @@ def load_image_from_upload(uploaded_file):
 
 def preprocess_image(image: Image.Image) -> dict:
 	"""Enhance the ECG image for digitization (denoise + contrast)."""
-	rgb = np.array(image)
-	gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-	denoised = cv2.medianBlur(gray, 3)
-	clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-	enhanced = clahe.apply(denoised)
-	return {
-		"gray": gray,
-		"enhanced": enhanced,
-	}
+	return _analyzer().preprocess_image(image)
 
 
 def detect_grid_spacing(enhanced_gray: np.ndarray) -> float | None:
 	"""Estimate grid spacing (pixels per mm) from ECG paper gridlines."""
-	h, w = enhanced_gray.shape
-	binary = cv2.adaptiveThreshold(
-		enhanced_gray,
-		255,
-		cv2.ADAPTIVE_THRESH_MEAN_C,
-		cv2.THRESH_BINARY_INV,
-		31,
-		7,
-	)
-	horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(30, w // 40), 1))
-	vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(30, h // 40)))
-	horizontal_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel)
-	vertical_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel)
-
-	row_sums = horizontal_lines.sum(axis=1)
-	col_sums = vertical_lines.sum(axis=0)
-	row_peaks, _ = find_peaks(row_sums, distance=max(5, h // 200), prominence=row_sums.max() * 0.2)
-	col_peaks, _ = find_peaks(col_sums, distance=max(5, w // 200), prominence=col_sums.max() * 0.2)
-
-	spacings = []
-	if len(row_peaks) > 2:
-		spacings.extend(np.diff(np.sort(row_peaks)))
-	if len(col_peaks) > 2:
-		spacings.extend(np.diff(np.sort(col_peaks)))
-
-	if not spacings:
-		return None
-	spacing = float(np.median(spacings))
-	if spacing <= 0:
-		return None
-	return spacing
+	return _analyzer().detect_grid_spacing(enhanced_gray)
 
 
 def digitize_waveform(enhanced_gray: np.ndarray) -> np.ndarray:
 	"""Trace the ECG waveform by column-wise picking dark pixels."""
-	h, w = enhanced_gray.shape
-	y = np.full(w, np.nan)
-	for x in range(w):
-		col = enhanced_gray[:, x]
-		if col.std() < 5:
-			continue
-		threshold = np.percentile(col, 10)
-		dark_indices = np.where(col <= threshold)[0]
-		if len(dark_indices) == 0:
-			y[x] = np.argmin(col)
-		else:
-			y[x] = int(np.mean(dark_indices))
-
-	y_series = pd.Series(y).interpolate(limit_direction="both")
-	y_filled = y_series.to_numpy()
-	window = max(5, (w // 200) * 2 + 1)
-	y_smooth = savgol_filter(y_filled, window_length=window, polyorder=2)
-	return y_smooth
+	return _analyzer().digitize_waveform(enhanced_gray)
 
 
 def waveform_to_signal(y_pixels: np.ndarray, mV_per_pixel: float) -> np.ndarray:
 	"""Convert y-pixel positions to amplitude in mV (baseline-centered)."""
-	baseline = np.median(y_pixels)
-	return (baseline - y_pixels) * mV_per_pixel
+	return _analyzer().waveform_to_signal(y_pixels, mV_per_pixel)
 
 
 def detect_r_peaks(signal: np.ndarray, ms_per_pixel: float, prominence_factor: float = 0.5):
 	"""Detect R-peaks using prominence and minimum distance heuristics."""
-	distance = int(200 / ms_per_pixel)
-	distance = max(distance, 1)
-	prominence = max(0.05, float(np.std(signal) * prominence_factor))
-	peaks, _ = find_peaks(signal, distance=distance, prominence=prominence)
-	return peaks
+	return _analyzer().detect_r_peaks(signal, ms_per_pixel, prominence_factor)
 
 
 def extract_features(signal: np.ndarray, ms_per_pixel: float, r_peaks: np.ndarray) -> dict:
 	"""Estimate P/Q/R/S/T indices around each detected R-peak."""
-	features = {
-		"p_peaks": [],
-		"q_peaks": [],
-		"r_peaks": r_peaks.tolist(),
-		"s_peaks": [],
-		"t_peaks": [],
-	}
-	samples_per_ms = 1 / ms_per_pixel
-	q_window = int(60 * samples_per_ms)
-	s_window = int(60 * samples_per_ms)
-	p_window = int(200 * samples_per_ms)
-	t_window = int(240 * samples_per_ms)
-
-	for r in r_peaks:
-		q_start = max(r - q_window, 0)
-		q_end = r
-		s_start = r
-		s_end = min(r + s_window, len(signal))
-
-		q_idx = q_start + int(np.argmin(signal[q_start:q_end])) if q_end > q_start else r
-		s_idx = s_start + int(np.argmin(signal[s_start:s_end])) if s_end > s_start else r
-
-		p_start = max(q_idx - p_window, 0)
-		p_end = q_idx
-		t_start = s_idx
-		t_end = min(s_idx + t_window, len(signal))
-
-		p_idx = p_start + int(np.argmax(signal[p_start:p_end])) if p_end > p_start else q_idx
-		t_idx = t_start + int(np.argmax(signal[t_start:t_end])) if t_end > t_start else s_idx
-
-		features["q_peaks"].append(int(q_idx))
-		features["s_peaks"].append(int(s_idx))
-		features["p_peaks"].append(int(p_idx))
-		features["t_peaks"].append(int(t_idx))
-
-	return features
+	return _analyzer().extract_features(signal, ms_per_pixel, r_peaks)
 
 
 def compute_metrics(features: dict, ms_per_pixel: float) -> dict:
 	"""Compute heart rate and interval metrics from detected features."""
-	r_peaks = np.array(features["r_peaks"], dtype=int)
-	if len(r_peaks) >= 2:
-		rr_intervals = np.diff(r_peaks) * ms_per_pixel
-		heart_rate = 60000 / np.mean(rr_intervals)
-	else:
-		rr_intervals = np.array([])
-		heart_rate = None
-
-	def avg_interval(a_list, b_list):
-		if not a_list or not b_list:
-			return None
-		count = min(len(a_list), len(b_list))
-		intervals = (np.array(b_list[:count]) - np.array(a_list[:count])) * ms_per_pixel
-		return float(np.mean(intervals)) if len(intervals) else None
-
-	pr_interval = avg_interval(features["p_peaks"], features["r_peaks"])
-	qrs_duration = avg_interval(features["q_peaks"], features["s_peaks"])
-	qt_interval = avg_interval(features["q_peaks"], features["t_peaks"])
-
-	return {
-		"heart_rate_bpm": float(heart_rate) if heart_rate is not None else None,
-		"rr_intervals_ms": rr_intervals.tolist(),
-		"pr_interval_ms": pr_interval,
-		"qrs_duration_ms": qrs_duration,
-		"qt_interval_ms": qt_interval,
-	}
+	return _analyzer().compute_metrics(features, ms_per_pixel)
 
 
 def build_analysis(image: Image.Image, pixels_per_mm: float, prominence_factor: float) -> dict:
 	"""Run end-to-end analysis pipeline for a single ECG image."""
-	prep = preprocess_image(image)
-	waveform_pixels = digitize_waveform(prep["enhanced"])
-	ms_per_pixel = 40 / pixels_per_mm
-	mV_per_pixel = 0.1 / pixels_per_mm
-	signal = waveform_to_signal(waveform_pixels, mV_per_pixel)
-	r_peaks = detect_r_peaks(signal, ms_per_pixel, prominence_factor)
-	features = extract_features(signal, ms_per_pixel, r_peaks)
-	metrics = compute_metrics(features, ms_per_pixel)
-	time_ms = (np.arange(len(signal)) * ms_per_pixel).tolist()
-
-	return {
-		"ms_per_pixel": ms_per_pixel,
-		"mV_per_pixel": mV_per_pixel,
-		"pixels_per_mm": pixels_per_mm,
-		"signal_mV": signal.tolist(),
-		"time_ms": time_ms,
-		"features": features,
-		"metrics": metrics,
-	}
+	return _analyzer().build_analysis(image, pixels_per_mm, prominence_factor)
 
 
 def align_signals(signal_a: np.ndarray, signal_b: np.ndarray, r_a: list, r_b: list) -> tuple:
 	"""Align two signals via R-peak alignment or cross-correlation."""
-	if r_a and r_b:
-		shift = r_b[0] - r_a[0]
-		method = "r-peak"
-	else:
-		corr = np.correlate(signal_b - signal_b.mean(), signal_a - signal_a.mean(), mode="full")
-		shift = int(np.argmax(corr) - (len(signal_a) - 1))
-		method = "cross-correlation"
-
-	if shift > 0:
-		aligned_a = signal_a
-		aligned_b = signal_b[shift:]
-	elif shift < 0:
-		aligned_a = signal_a[-shift:]
-		aligned_b = signal_b
-	else:
-		aligned_a = signal_a
-		aligned_b = signal_b
-
-	min_len = min(len(aligned_a), len(aligned_b))
-	return aligned_a[:min_len], aligned_b[:min_len], method
+	return _aligner().align_signals(signal_a, signal_b, r_a, r_b)
 
 
 def comparison_metrics(metrics_a: dict, metrics_b: dict) -> dict:
@@ -380,15 +734,6 @@ def comparison_metrics(metrics_a: dict, metrics_b: dict) -> dict:
 
 def metrics_table(metrics: dict) -> pd.DataFrame:
 	"""Convert metrics dict to a table for display/export."""
-	rows = []
-	for key, label in [
-		("heart_rate_bpm", "Heart Rate (bpm)"),
-		("pr_interval_ms", "PR Interval (ms)"),
-		("qrs_duration_ms", "QRS Duration (ms)"),
-		("qt_interval_ms", "QT Interval (ms)"),
-	]:
-		rows.append({"Metric": label, "Value": metrics.get(key)})
-	return pd.DataFrame(rows)
 
 
 def render_signal_plot(signal: np.ndarray, time_ms: np.ndarray, features: dict | None = None):
@@ -445,23 +790,22 @@ def render_delta_plot(delta):
 
 def analysis_to_exports(analysis: dict) -> tuple[str, str]:
 	"""Build CSV and JSON exports from analysis results."""
-	csv_df = metrics_table(analysis["metrics"])
-	csv_data = csv_df.to_csv(index=False)
-	json_data = json.dumps(analysis, indent=2)
-	return csv_data, json_data
 
 
 def main():
 	"""Streamlit GUI entry point."""
 	st.set_page_config(page_title="ECG Graph Extraction", layout="wide")
 	init_db()
+	enforce_session_timeout()
 
 	st.title("ECG Graph Extraction and Analysis")
 	st.caption("Upload ECG images, digitize waveforms, extract features, compare, and store results.")
 
-	tab_analyze, tab_compare, tab_records = st.tabs(["Analyze", "Compare", "Records"])
+
+	tab_analyze, tab_compare, tab_records, *tab_admin = st.tabs(base_tabs)
 
 	with tab_analyze:
+		require_roles(["Administrator", "Clinician", "Researcher"])
 		st.subheader("Analyze ECG Image")
 		uploaded = st.file_uploader("Upload ECG image (PNG/JPG/PDF)", type=["png", "jpg", "jpeg", "pdf"])
 
@@ -507,8 +851,6 @@ def main():
 				st.dataframe(metrics_table(analysis["metrics"]))
 
 				csv_data, json_data = analysis_to_exports(analysis)
-				st.download_button("Download CSV", csv_data, file_name="ecg_metrics.csv", mime="text/csv")
-				st.download_button("Download JSON", json_data, file_name="ecg_analysis.json", mime="application/json")
 
 				with st.form("save_record"):
 					st.write("Save to database")
@@ -518,6 +860,10 @@ def main():
 					root_cause_time = st.text_input("Time of root cause")
 					submitted = st.form_submit_button("Save record")
 					if submitted:
+						allow_patient_storage = get_setting("allow_patient_data_storage", "false") == "true"
+						if not allow_patient_storage and patient_id:
+							patient_id = None
+							st.warning("Patient identifiers are not stored unless enabled by an Administrator.")
 						metadata = {
 							"patient_id": patient_id,
 							"ecg_datetime": ecg_datetime,
@@ -531,8 +877,13 @@ def main():
 							analysis,
 						)
 						st.success(f"Record saved with ID {record_id}")
+						log_audit("record_saved", "success", {
+							"id": st.session_state.get("user_id"),
+							"username": st.session_state.get("username"),
+						})
 
 	with tab_compare:
+		require_roles(["Administrator", "Clinician", "Researcher"])
 		st.subheader("Compare ECGs")
 		st.caption("Each sample can come from saved records or a new upload.")
 
@@ -543,10 +894,6 @@ def main():
 				if records.empty:
 					st.info("No records available.")
 					return None
-				record_map = {
-					f"{row.id} | {row.patient_id} | {row.ecg_datetime}": row.id
-					for row in records.itertuples(index=False)
-				}
 				selection = st.selectbox(
 					f"Select ECG {label}",
 					list(record_map.keys()),
@@ -655,15 +1002,221 @@ def main():
 				comparison_json,
 				file_name="ecg_comparison.json",
 				mime="application/json",
+				on_click=lambda: log_audit(
+					"export_comparison",
+					"success",
+					{
+						"id": st.session_state.get("user_id"),
+						"username": st.session_state.get("username"),
+					},
+				),
 			)
 
 	with tab_records:
+		require_roles(["Administrator", "Clinician", "Researcher"])
 		st.subheader("Saved Records")
 		records = load_records()
 		if records.empty:
 			st.info("No records saved yet.")
 		else:
-			st.dataframe(records, use_container_width=True)
+			restrict_ids = get_setting("restrict_patient_identifiers", "true") == "true"
+			if restrict_ids and st.session_state.get("role") == "Researcher":
+				records = records.copy()
+				records["patient_id"] = records["patient_id"].apply(mask_patient_id)
+
+			is_admin = is_user_management_enabled() and user_has_role(["Administrator"])
+			if is_admin:
+				# Admins get a selectable "Delete" column and a single Delete button.
+				editor_df = records.copy()
+				editor_df.insert(0, "Delete", False)
+
+				# Header row with a "Delete" button aligned to the Delete column.
+				head_cols = st.columns([1, 3, 3, 3, 6])
+				head_cols[0].write("")
+				head_cols[1].markdown("**id**")
+				head_cols[2].markdown("**patient_id**")
+				head_cols[3].markdown("**ecg_datetime**")
+				delete_clicked = head_cols[4].button("Delete", type="primary", key="delete_selected_records")
+
+				edited = st.data_editor(
+					editor_df,
+					use_container_width=True,
+					hide_index=True,
+					disabled=[col for col in editor_df.columns if col != "Delete"],
+					column_config={
+						"Delete": st.column_config.CheckboxColumn(
+							"",
+							help="Check to mark this record for deletion.",
+							default=False,
+						),
+					},
+					key="records_table_editor",
+				)
+
+				if delete_clicked:
+					selected_ids = edited.loc[edited["Delete"] == True, "id"].tolist()  # noqa: E712
+					if not selected_ids:
+						st.warning("No records selected.")
+					else:
+						confirm = st.checkbox(
+							"I understand this permanently deletes the selected record(s)",
+							key="delete_selected_confirm",
+						)
+						if not confirm:
+							st.stop()
+						deleted_count = 0
+						missing_count = 0
+						for record_id in selected_ids:
+							if delete_record(int(record_id)):
+								deleted_count += 1
+							else:
+								missing_count += 1
+						log_audit(
+							"record_deleted",
+							"success" if missing_count == 0 else "partial",
+							{
+								"id": st.session_state.get("user_id"),
+								"username": st.session_state.get("username"),
+							},
+							f"record_ids={selected_ids}",
+						)
+						st.success(f"Deleted {deleted_count} record(s).")
+						if missing_count:
+							st.warning(f"{missing_count} record(s) were not found (already deleted?).")
+						st.rerun()
+			else:
+				st.dataframe(records, use_container_width=True)
+				if is_user_management_enabled() and not user_has_role(["Administrator"]):
+					st.info("Only Administrators can delete records.")
+
+	if tab_admin:
+		with tab_admin[0]:
+			require_roles(["Administrator"])
+			st.subheader("User Management")
+			st.caption("Admin-only controls for access, users, and audit logs.")
+
+			st.markdown("### Settings")
+			user_mgmt_enabled = st.checkbox(
+				"Enable user management",
+				value=is_user_management_enabled(),
+			)
+			session_timeout = st.number_input(
+				"Session timeout (minutes)",
+				min_value=5,
+				max_value=240,
+				value=get_session_timeout_minutes(),
+				step=5,
+			)
+			auth_mode = st.selectbox("Authentication mode", ["local"], index=0)
+			allow_patient_storage = st.checkbox(
+				"Allow storing patient identifiers",
+				value=get_setting("allow_patient_data_storage", "false") == "true",
+			)
+			restrict_patient_ids = st.checkbox(
+				"Restrict patient identifiers for Researcher role",
+				value=get_setting("restrict_patient_identifiers", "true") == "true",
+			)
+			if st.button("Save settings"):
+				set_setting("user_management_enabled", "true" if user_mgmt_enabled else "false")
+				set_setting("session_timeout_minutes", str(int(session_timeout)))
+				set_setting("auth_mode", auth_mode)
+				set_setting("allow_patient_data_storage", "true" if allow_patient_storage else "false")
+				set_setting("restrict_patient_identifiers", "true" if restrict_patient_ids else "false")
+				log_audit(
+					"settings_updated",
+					"success",
+					{
+						"id": st.session_state.get("user_id"),
+						"username": st.session_state.get("username"),
+						},
+				)
+				st.success("Settings updated.")
+
+			st.markdown("### Users")
+			users_df = list_users()
+			st.dataframe(users_df, use_container_width=True)
+
+			with st.expander("Create user"):
+				new_username = st.text_input("Username", key="new_username")
+				new_display = st.text_input("Display name", key="new_display")
+				new_role = st.selectbox(
+					"Role",
+					["Administrator", "Clinician", "Researcher"],
+					index=2,
+					key="new_role",
+				)
+				new_password = st.text_input("Password", type="password", key="new_password")
+				new_enabled = st.checkbox("Enabled", value=True, key="new_enabled")
+				if st.button("Create user"):
+					if not new_username or not new_password:
+						st.error("Username and password are required.")
+					else:
+						create_user(new_username, new_display, new_role, new_password, new_enabled)
+						log_audit(
+							"user_created",
+							"success",
+							{
+								"id": st.session_state.get("user_id"),
+								"username": st.session_state.get("username"),
+							},
+							f"user={new_username}",
+						)
+						st.success("User created.")
+						st.rerun()
+
+			with st.expander("Update user"):
+				user_options = {f"{row.username} ({row.role})": row.id for row in users_df.itertuples(index=False)}
+				if user_options:
+					selected_label = st.selectbox("Select user", list(user_options.keys()))
+					selected_id = user_options[selected_label]
+					selected_row = users_df[users_df["id"] == selected_id].iloc[0]
+					upd_display = st.text_input("Display name", value=selected_row["display_name"] or "")
+					upd_role = st.selectbox(
+						"Role",
+						["Administrator", "Clinician", "Researcher"],
+						index=["Administrator", "Clinician", "Researcher"].index(selected_row["role"]),
+					)
+					upd_enabled = st.checkbox("Enabled", value=bool(selected_row["enabled"]))
+					if st.button("Update user"):
+						update_user(selected_id, upd_display, upd_role, upd_enabled)
+						log_audit(
+							"user_updated",
+							"success",
+							{
+								"id": st.session_state.get("user_id"),
+								"username": st.session_state.get("username"),
+							},
+							f"user_id={selected_id}",
+						)
+						st.success("User updated.")
+						st.rerun()
+
+			with st.expander("Reset password"):
+				user_options = {f"{row.username}": row.id for row in users_df.itertuples(index=False)}
+				if user_options:
+					selected_label = st.selectbox("Select user", list(user_options.keys()), key="reset_user")
+					selected_id = user_options[selected_label]
+					new_password = st.text_input("New password", type="password", key="reset_password")
+					if st.button("Reset password"):
+						if not new_password:
+							st.error("Password is required.")
+						else:
+							reset_password(selected_id, new_password)
+							log_audit(
+								"password_reset",
+								"success",
+								{
+									"id": st.session_state.get("user_id"),
+									"username": st.session_state.get("username"),
+								},
+								f"user_id={selected_id}",
+							)
+							st.success("Password reset.")
+
+			st.markdown("### Audit Logs")
+			log_limit = st.slider("Log entries", min_value=50, max_value=500, value=200, step=50)
+			logs_df = list_audit_logs(limit=log_limit)
+			st.dataframe(logs_df, use_container_width=True)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,84 @@ This application ingests ECG graph images (PNG/JPG/PDF), digitizes the waveform,
    - Original images stored on disk.
    - Analyses stored as JSON blobs in SQLite.
 
+5. **User Management & Security Layer**
+   - Authentication and role-based access control.
+   - Audit logging for sensitive actions.
+   - Patient identifier access restrictions by role.
+
+### 4.1 Class Diagram (OO Core)
+The codebase exposes a function-level API (for the Streamlit UI/tests) that delegates to a small set of core classes.
+
+```mermaid
+classDiagram
+   class StoragePaths {
+      +str base_dir
+      +str data_dir
+      +str image_dir
+      +str db_path
+      +current() StoragePaths
+   }
+
+   class ECGDatabase {
+      -StoragePaths _paths
+      -int _schema_version
+      +ensure_storage() None
+      +connect() sqlite3.Connection
+      +init_db() None
+      +migrate_db(conn) None
+      +create_indexes(conn) None
+      +seed_default_settings(conn) None
+      +seed_default_admin(conn) None
+      +get_setting(key, default) str|None
+      +set_setting(key, value) None
+      +compute_hash(data) str
+      +save_image_bytes(image_bytes, ext) str
+      +load_records() pd.DataFrame
+      +load_record(record_id) dict
+      +save_record(metadata, image_bytes, ext, analysis) int
+      +delete_record(record_id) bool
+   }
+
+   class ECGAnalyzer {
+      +preprocess_image(image) dict
+      +detect_grid_spacing(enhanced_gray) float|None
+      +digitize_waveform(enhanced_gray) np.ndarray
+      +waveform_to_signal(y_pixels, mV_per_pixel) np.ndarray
+      +detect_r_peaks(signal, ms_per_pixel, prominence_factor) np.ndarray
+      +extract_features(signal, ms_per_pixel, r_peaks) dict
+      +compute_metrics(features, ms_per_pixel) dict
+      +build_analysis(image, pixels_per_mm, prominence_factor) dict
+   }
+
+   class ECGAligner {
+      +align_signals(signal_a, signal_b, r_a, r_b) tuple
+   }
+
+   class ECGExporter {
+      +metrics_table(metrics) pd.DataFrame
+      +analysis_to_exports(analysis) tuple~str,str~
+   }
+
+   class PublicAPI~module-level functions~ {
+      +init_db()
+      +get_setting(key, default)
+      +set_setting(key, value)
+      +save_record(metadata, image_bytes, ext, analysis)
+      +load_records()
+      +load_record(record_id)
+      +delete_record(record_id)
+      +build_analysis(image, pixels_per_mm, prominence_factor)
+      +align_signals(signal_a, signal_b, r_a, r_b)
+      +analysis_to_exports(analysis)
+   }
+
+   ECGDatabase --> StoragePaths : uses
+   PublicAPI ..> ECGDatabase : delegates
+   PublicAPI ..> ECGAnalyzer : delegates
+   PublicAPI ..> ECGAligner : delegates
+   PublicAPI ..> ECGExporter : delegates
+```
+
 ## 5. Data Flow
 1. User uploads ECG image.
 2. Preprocessing enhances and denoises the image.
@@ -44,7 +122,6 @@ This application ingests ECG graph images (PNG/JPG/PDF), digitizes the waveform,
 5. Features and metrics are extracted.
 6. Results are displayed and optionally saved.
 7. Two ECGs (each from an upload or a stored record) can be aligned and compared.
-8. CSV/JSON exports are generated.
 
 ## 5.1 Workflow Diagrams
 
@@ -120,6 +197,7 @@ flowchart TB
 - Analyze: upload, set calibration, run analysis, plot, export, save.
 - Compare: choose two ECGs with independent sources (record or upload), align, visualize delta, export comparison.
 - Records: view stored analyses.
+- User Management (Admin-only): manage users/roles, view audit logs, configure auth/session settings.
 
 ## 9. Error Handling
 - Invalid files rejected with UI errors.
@@ -136,6 +214,7 @@ flowchart TB
 - Local‑only storage by default.
 - No network data transmission.
 - Images remain unmodified; hashes ensure integrity.
+- Optional user management enforces authentication, RBAC, and audit logging.
 
 ## 12. Testing Strategy
 - Unit tests for preprocessing, digitization, and metrics.
