@@ -15,7 +15,7 @@ from PIL import Image
 from scipy.signal import find_peaks, savgol_filter
 
 
-# Application storage locations
+# Application storage locations and metadata used by the database layer.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 IMAGE_DIR = os.path.join(DATA_DIR, "images")
@@ -27,6 +27,59 @@ def ensure_storage():
 	os.makedirs(IMAGE_DIR, exist_ok=True)
 
 
+@dataclass(frozen=True)
+class StoragePaths:
+	base_dir: str
+	data_dir: str
+	image_dir: str
+	db_path: str
+
+	@classmethod
+	def current(cls) -> "StoragePaths":
+		# Read module-level paths at call-time so tests can monkeypatch them.
+		return cls(
+			base_dir=BASE_DIR,
+			data_dir=DATA_DIR,
+			image_dir=IMAGE_DIR,
+			db_path=DB_PATH,
+		)
+
+
+class ECGDatabase:
+	def __init__(self, paths: StoragePaths, schema_version: int = DB_SCHEMA_VERSION):
+		self._paths = paths
+		self._schema_version = int(schema_version)
+
+	@property
+	def paths(self) -> StoragePaths:
+		return self._paths
+
+	def ensure_storage(self) -> None:
+		# Create the on-disk folders needed for image storage.
+		os.makedirs(self._paths.image_dir, exist_ok=True)
+
+	def connect(self) -> sqlite3.Connection:
+		# Open a connection with foreign keys enforced.
+		self.ensure_storage()
+		conn = sqlite3.connect(self._paths.db_path)
+		conn.execute("PRAGMA foreign_keys = ON")
+		return conn
+
+	def get_db_schema_version(self, conn: sqlite3.Connection) -> int:
+		# Read schema version from the settings table if it exists.
+		try:
+			row = conn.execute("SELECT value FROM app_settings WHERE key = ?", ("schema_version",)).fetchone()
+		except sqlite3.Error:
+			return 0
+		if not row:
+			return 0
+		try:
+			return int(row[0])
+		except (TypeError, ValueError):
+			return 0
+
+	def set_db_schema_version(self, conn: sqlite3.Connection, version: int) -> None:
+		# Persist the current schema version for future migrations.
 		conn.execute(
 			"INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 			("schema_version", str(int(version))),
@@ -52,6 +105,96 @@ def ensure_storage():
 			if not row:
 				conn.execute(
 					"""
+					CREATE TABLE ecg_comparisons (
+						id INTEGER PRIMARY KEY AUTOINCREMENT,
+						record_a_id INTEGER NOT NULL,
+						record_b_id INTEGER NOT NULL,
+						alignment_method TEXT,
+						delta_json TEXT NOT NULL,
+						created_at TEXT NOT NULL,
+						FOREIGN KEY(record_a_id) REFERENCES ecg_records(id) ON DELETE CASCADE,
+						FOREIGN KEY(record_b_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+					)
+					"""
+				)
+			elif not self.ecg_comparisons_has_foreign_keys(conn):
+				conn.execute("ALTER TABLE ecg_comparisons RENAME TO ecg_comparisons_old")
+				conn.execute(
+					"""
+					CREATE TABLE ecg_comparisons (
+						id INTEGER PRIMARY KEY AUTOINCREMENT,
+						record_a_id INTEGER NOT NULL,
+						record_b_id INTEGER NOT NULL,
+						alignment_method TEXT,
+						delta_json TEXT NOT NULL,
+						created_at TEXT NOT NULL,
+						FOREIGN KEY(record_a_id) REFERENCES ecg_records(id) ON DELETE CASCADE,
+						FOREIGN KEY(record_b_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+					)
+					"""
+				)
+				conn.execute(
+					"""
+					INSERT INTO ecg_comparisons (id, record_a_id, record_b_id, alignment_method, delta_json, created_at)
+					SELECT id, record_a_id, record_b_id, alignment_method, delta_json, created_at
+					FROM ecg_comparisons_old
+					"""
+				)
+				conn.execute("DROP TABLE ecg_comparisons_old")
+
+			self.set_db_schema_version(conn, 2)
+
+		self.set_db_schema_version(conn, self._schema_version)
+
+	def create_indexes(self, conn: sqlite3.Connection) -> None:
+		# Helpful indexes for common queries in the UI.
+		conn.execute("CREATE INDEX IF NOT EXISTS idx_ecg_records_created_at ON ecg_records(created_at)")
+		conn.execute("CREATE INDEX IF NOT EXISTS idx_ecg_comparisons_record_a ON ecg_comparisons(record_a_id)")
+		conn.execute("CREATE INDEX IF NOT EXISTS idx_ecg_comparisons_record_b ON ecg_comparisons(record_b_id)")
+		conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)")
+
+	def seed_default_settings(self, conn: sqlite3.Connection) -> None:
+		# Baseline settings keep functionality disabled until admins opt in.
+		defaults = {
+			"user_management_enabled": "false",
+			"session_timeout_minutes": "30",
+			"auth_mode": "local",
+			"allow_patient_data_storage": "false",
+			"restrict_patient_identifiers": "true",
+		}
+		for key, value in defaults.items():
+			conn.execute(
+				"INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+				(key, value),
+			)
+
+	def seed_default_admin(self, conn: sqlite3.Connection) -> None:
+		# Ensure at least one admin account exists on first run.
+		row = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+		if row and row[0] > 0:
+			return
+		password = "admin"
+		salt = secrets.token_hex(16)
+		password_hash = hash_password(password, salt)
+		now = datetime.utcnow().isoformat()
+		conn.execute(
+			"""
+			INSERT INTO users (username, display_name, role, password_hash, password_salt, enabled, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+			""",
+			("admin", "Administrator", "Administrator", password_hash, salt, now, now),
+		)
+		conn.execute(
+			"INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+			("default_admin_created", "true"),
+		)
+
+	def init_db(self) -> None:
+		# Initialize core tables and apply migrations as needed.
+		self.ensure_storage()
+		with self.connect() as conn:
+			conn.execute(
+				"""
 				CREATE TABLE IF NOT EXISTS ecg_records (
 					id INTEGER PRIMARY KEY AUTOINCREMENT,
 					patient_id TEXT,
@@ -120,19 +263,47 @@ def ensure_storage():
 				("schema_version", str(self._schema_version)),
 			)
 
+	def get_setting(self, key: str, default: str | None = None) -> str | None:
+		# Return a configuration value, falling back to a default.
+		with sqlite3.connect(self._paths.db_path) as conn:
+			row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+		if row:
+			return row[0]
+		return default
+
+	def set_setting(self, key: str, value: str) -> None:
+		# Upsert a configuration value in the settings table.
+		with sqlite3.connect(self._paths.db_path) as conn:
+			conn.execute(
+				"INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+				(key, value),
+			)
+
+	def compute_hash(self, data: bytes) -> str:
+		# SHA-256 hash used for image deduplication.
 		return hashlib.sha256(data).hexdigest()
 
+	def save_image_bytes(self, image_bytes: bytes, ext: str) -> str:
+		# Store image bytes on disk and return the filename.
+		self.ensure_storage()
+		image_hash = self.compute_hash(image_bytes)
 		filename = f"{image_hash[:16]}{ext}"
 		if not os.path.exists(path):
 			with open(path, "wb") as f:
 				f.write(image_bytes)
 		return filename
 
+	def load_records(self) -> pd.DataFrame:
+		# Load summarized record list for the Records tab.
+		with sqlite3.connect(self._paths.db_path) as conn:
 			return pd.read_sql_query(
 				"SELECT id, patient_id, ecg_datetime, created_at FROM ecg_records ORDER BY created_at DESC",
 				conn,
 			)
 
+	def load_record(self, record_id: int) -> dict:
+		# Fetch a single record with its stored analysis payload.
+		with sqlite3.connect(self._paths.db_path) as conn:
 			row = conn.execute(
 				"SELECT * FROM ecg_records WHERE id = ?",
 				(record_id,),
@@ -154,6 +325,10 @@ def ensure_storage():
 		data["analysis"] = json.loads(data["analysis_json"])
 		return data
 
+	def save_record(self, metadata: dict, image_bytes: bytes, ext: str, analysis: dict) -> int:
+		# Persist metadata, image, and analysis results in a single row.
+		image_filename = self.save_image_bytes(image_bytes, ext)
+		image_hash = self.compute_hash(image_bytes)
 		created_at = datetime.utcnow().isoformat()
 			cur = conn.execute(
 				"""
@@ -174,8 +349,27 @@ def ensure_storage():
 			)
 			return cur.lastrowid
 
+	def delete_record(self, record_id: int) -> bool:
+		# Remove record and related comparisons; clean up image if unused.
+		self.ensure_storage()
+		image_filename: str | None = None
+		with sqlite3.connect(self._paths.db_path) as conn:
+			conn.execute("PRAGMA foreign_keys = ON")
+			row = conn.execute(
+				"SELECT image_filename FROM ecg_records WHERE id = ?",
+				(record_id,),
+			).fetchone()
+			if not row:
+				return False
+			image_filename = row[0]
+			conn.execute(
+				"DELETE FROM ecg_comparisons WHERE record_a_id = ? OR record_b_id = ?",
+				(record_id, record_id),
+			)
+			conn.execute("DELETE FROM ecg_records WHERE id = ?", (record_id,))
 
 		if image_filename:
+			# Only remove the image file if no other records reference it.
 			with sqlite3.connect(self._paths.db_path) as conn:
 				count_row = conn.execute(
 					"SELECT COUNT(*) FROM ecg_records WHERE image_filename = ?",
@@ -192,6 +386,9 @@ def ensure_storage():
 
 
 
+class ECGAnalyzer:
+	def preprocess_image(self, image: Image.Image) -> dict:
+		# Convert to grayscale and apply denoise + contrast enhancement.
 		rgb = np.array(image)
 		gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 		denoised = cv2.medianBlur(gray, 3)
@@ -202,6 +399,8 @@ def ensure_storage():
 			"enhanced": enhanced,
 		}
 
+	def detect_grid_spacing(self, enhanced_gray: np.ndarray) -> float | None:
+		# Detect gridlines and estimate median spacing between them.
 		h, w = enhanced_gray.shape
 		binary = cv2.adaptiveThreshold(
 			enhanced_gray,
@@ -234,6 +433,8 @@ def ensure_storage():
 			return None
 		return spacing
 
+	def digitize_waveform(self, enhanced_gray: np.ndarray) -> np.ndarray:
+		# Trace the darkest pixel per column to build a waveform.
 		h, w = enhanced_gray.shape
 		y = np.full(w, np.nan)
 		for x in range(w):
@@ -253,15 +454,21 @@ def ensure_storage():
 		y_smooth = savgol_filter(y_filled, window_length=window, polyorder=2)
 		return y_smooth
 
+	def waveform_to_signal(self, y_pixels: np.ndarray, mV_per_pixel: float) -> np.ndarray:
+		# Convert from image coordinates to baseline-centered amplitudes.
 		baseline = np.median(y_pixels)
 		return (baseline - y_pixels) * mV_per_pixel
 
+	def detect_r_peaks(self, signal: np.ndarray, ms_per_pixel: float, prominence_factor: float = 0.5):
+		# Use distance and prominence heuristics to find R-peaks.
 		distance = int(200 / ms_per_pixel)
 		distance = max(distance, 1)
 		prominence = max(0.05, float(np.std(signal) * prominence_factor))
 		peaks, _ = find_peaks(signal, distance=distance, prominence=prominence)
 		return peaks
 
+	def extract_features(self, signal: np.ndarray, ms_per_pixel: float, r_peaks: np.ndarray) -> dict:
+		# For each R-peak, infer neighboring P/Q/S/T points using windows.
 		features = {
 			"p_peaks": [],
 			"q_peaks": [],
@@ -299,6 +506,8 @@ def ensure_storage():
 
 		return features
 
+	def compute_metrics(self, features: dict, ms_per_pixel: float) -> dict:
+		# Calculate heart rate and interval metrics from detected indices.
 		r_peaks = np.array(features["r_peaks"], dtype=int)
 		if len(r_peaks) >= 2:
 			rr_intervals = np.diff(r_peaks) * ms_per_pixel
@@ -326,6 +535,10 @@ def ensure_storage():
 			"qt_interval_ms": qt_interval,
 		}
 
+	def build_analysis(self, image: Image.Image, pixels_per_mm: float, prominence_factor: float) -> dict:
+		# Run full pipeline: preprocess -> digitize -> detect peaks -> metrics.
+		prep = self.preprocess_image(image)
+		waveform_pixels = self.digitize_waveform(prep["enhanced"])
 		ms_per_pixel = 40 / pixels_per_mm
 		mV_per_pixel = 0.1 / pixels_per_mm
 		time_ms = (np.arange(len(signal)) * ms_per_pixel).tolist()
@@ -341,6 +554,9 @@ def ensure_storage():
 		}
 
 
+class ECGAligner:
+	def align_signals(self, signal_a: np.ndarray, signal_b: np.ndarray, r_a: list, r_b: list) -> tuple:
+		# Align by first R-peak if available, else use cross-correlation.
 		if r_a and r_b:
 			shift = r_b[0] - r_a[0]
 			method = "r-peak"
@@ -350,9 +566,11 @@ def ensure_storage():
 			method = "cross-correlation"
 
 		if shift > 0:
+			# Remove leading samples from signal_b.
 			aligned_a = signal_a
 			aligned_b = signal_b[shift:]
 		elif shift < 0:
+			# Remove leading samples from signal_a.
 			aligned_a = signal_a[-shift:]
 			aligned_b = signal_b
 		else:
@@ -365,6 +583,7 @@ def ensure_storage():
 
 class ECGExporter:
 	def metrics_table(self, metrics: dict) -> pd.DataFrame:
+		# Convert metrics into a tabular format for display/export.
 		rows = []
 		for key, label in [
 			("heart_rate_bpm", "Heart Rate (bpm)"),
@@ -376,6 +595,7 @@ class ECGExporter:
 		return pd.DataFrame(rows)
 
 	def analysis_to_exports(self, analysis: dict) -> tuple[str, str]:
+		# Build CSV and JSON payloads for downloads.
 		csv_df = self.metrics_table(analysis["metrics"])
 		csv_data = csv_df.to_csv(index=False)
 		json_data = json.dumps(analysis, indent=2)
@@ -383,18 +603,22 @@ class ECGExporter:
 
 
 def _db() -> ECGDatabase:
+	# Lazy wrapper for the database layer.
 	return ECGDatabase(StoragePaths.current())
 
 
 def _analyzer() -> ECGAnalyzer:
+	# Lazy wrapper for the image analysis layer.
 	return ECGAnalyzer()
 
 
 def _aligner() -> ECGAligner:
+	# Lazy wrapper for the signal alignment helper.
 	return ECGAligner()
 
 
 def _exporter() -> ECGExporter:
+	# Lazy wrapper for the export helper.
 	return ECGExporter()
 
 
@@ -447,14 +671,17 @@ def set_setting(key: str, value: str) -> None:
 
 
 def hash_password(password: str, salt: str) -> str:
+	# Salted hash for password storage.
 	return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
 
 
 def verify_password(password: str, salt: str, password_hash: str) -> bool:
+	# Check a plaintext password against the stored hash.
 	return hash_password(password, salt) == password_hash
 
 
 def get_user_by_username(username: str) -> dict | None:
+	# Retrieve user credentials and profile by username.
 	with sqlite3.connect(DB_PATH) as conn:
 		row = conn.execute(
 			"SELECT id, username, display_name, role, password_hash, password_salt, enabled FROM users WHERE username = ?",
@@ -474,6 +701,7 @@ def get_user_by_username(username: str) -> dict | None:
 
 
 def list_users() -> pd.DataFrame:
+	# List user accounts for the admin view.
 	with sqlite3.connect(DB_PATH) as conn:
 		return pd.read_sql_query(
 			"SELECT id, username, display_name, role, enabled, created_at, updated_at FROM users ORDER BY username",
@@ -482,6 +710,7 @@ def list_users() -> pd.DataFrame:
 
 
 def create_user(username: str, display_name: str, role: str, password: str, enabled: bool = True) -> None:
+	# Create a new user with salted password hash.
 	salt = secrets.token_hex(16)
 	password_hash = hash_password(password, salt)
 	now = datetime.utcnow().isoformat()
@@ -496,6 +725,7 @@ def create_user(username: str, display_name: str, role: str, password: str, enab
 
 
 def update_user(user_id: int, display_name: str, role: str, enabled: bool) -> None:
+	# Update profile metadata and enabled state.
 	now = datetime.utcnow().isoformat()
 	with sqlite3.connect(DB_PATH) as conn:
 		conn.execute(
@@ -507,6 +737,7 @@ def update_user(user_id: int, display_name: str, role: str, enabled: bool) -> No
 
 
 def reset_password(user_id: int, new_password: str) -> None:
+	# Reset a user password with a new salt.
 	salt = secrets.token_hex(16)
 	password_hash = hash_password(new_password, salt)
 	now = datetime.utcnow().isoformat()
@@ -520,6 +751,7 @@ def reset_password(user_id: int, new_password: str) -> None:
 
 
 def log_audit(event_type: str, outcome: str, user: dict | None = None, details: str | None = None) -> None:
+	# Insert a row into audit_logs for security and traceability.
 	with sqlite3.connect(DB_PATH) as conn:
 		conn.execute(
 			"""
@@ -538,6 +770,7 @@ def log_audit(event_type: str, outcome: str, user: dict | None = None, details: 
 
 
 def list_audit_logs(limit: int = 200) -> pd.DataFrame:
+	# Return the latest audit rows for the admin view.
 	with sqlite3.connect(DB_PATH) as conn:
 		return pd.read_sql_query(
 			"SELECT timestamp, event_type, username, outcome, details FROM audit_logs ORDER BY id DESC LIMIT ?",
@@ -547,6 +780,7 @@ def list_audit_logs(limit: int = 200) -> pd.DataFrame:
 
 
 def authenticate_user(username: str, password: str) -> dict | None:
+	# Validate username/password against stored credentials.
 	user = get_user_by_username(username)
 	if not user or not user.get("enabled"):
 		return None
@@ -556,10 +790,12 @@ def authenticate_user(username: str, password: str) -> dict | None:
 
 
 def is_user_management_enabled() -> bool:
+	# Feature flag for access control and auditing.
 	return get_setting("user_management_enabled", "false") == "true"
 
 
 def get_session_timeout_minutes() -> int:
+	# Defensive parsing of the session timeout setting.
 	value = get_setting("session_timeout_minutes", "30")
 	try:
 		return int(value)
@@ -568,11 +804,13 @@ def get_session_timeout_minutes() -> int:
 
 
 def user_has_role(roles: list[str]) -> bool:
+	# Helper for checking the current session's role.
 	role = st.session_state.get("role")
 	return role in roles
 
 
 def require_roles(roles: list[str]):
+	# Gate UI sections based on authentication and role.
 	if not is_user_management_enabled():
 		return
 	if not st.session_state.get("authenticated"):
@@ -584,6 +822,7 @@ def require_roles(roles: list[str]):
 
 
 def enforce_session_timeout():
+	# Clear authentication when idle time exceeds configured threshold.
 	if not is_user_management_enabled():
 		return
 	if not st.session_state.get("authenticated"):
@@ -625,6 +864,7 @@ def load_records() -> pd.DataFrame:
 
 
 def mask_patient_id(value: str | None) -> str | None:
+	# Mask patient identifiers for restricted roles.
 	if not value:
 		return value
 	return "***"
@@ -651,6 +891,7 @@ def delete_record(record_id: int) -> bool:
 
 def open_pdf_first_page(pdf_bytes: bytes) -> Image.Image:
 	"""Render the first page of a PDF to an RGB image."""
+	# Streamlit uploads PDF bytes; fitz renders to PNG.
 	doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 	page = doc.load_page(0)
 	pix = page.get_pixmap(dpi=200)
@@ -662,6 +903,7 @@ def load_image_from_upload(uploaded_file):
 	"""Read uploaded file and return (PIL image, raw bytes, file extension)."""
 	if uploaded_file is None:
 		return None, None, None
+	# Preserve raw bytes for hashing and disk storage.
 	data = uploaded_file.getvalue()
 	filename = uploaded_file.name.lower()
 	if filename.endswith(".pdf"):
@@ -720,6 +962,7 @@ def align_signals(signal_a: np.ndarray, signal_b: np.ndarray, r_a: list, r_b: li
 
 def comparison_metrics(metrics_a: dict, metrics_b: dict) -> dict:
 	"""Compute delta metrics between two ECG analyses."""
+	# Use None when either side is missing so deltas are not misleading.
 	keys = ["heart_rate_bpm", "pr_interval_ms", "qrs_duration_ms", "qt_interval_ms"]
 	delta = {}
 	for key in keys:
@@ -741,6 +984,7 @@ def render_signal_plot(signal: np.ndarray, time_ms: np.ndarray, features: dict |
 	import matplotlib.pyplot as plt
 
 	fig, ax = plt.subplots()
+	# Line plot of the waveform and optional feature markers.
 	ax.plot(time_ms, signal, label="ECG")
 	if features:
 		for label, color, key in [
@@ -765,6 +1009,7 @@ def render_comparison_plot(signal_a, signal_b):
 	import matplotlib.pyplot as plt
 
 	fig, ax = plt.subplots()
+	# Overlay aligned samples for a quick visual comparison.
 	ax.plot(signal_a, label="ECG-A", color="blue")
 	ax.plot(signal_b, label="ECG-B", color="red", alpha=0.7)
 	ax.set_xlabel("Sample")
@@ -779,6 +1024,7 @@ def render_delta_plot(delta):
 	import matplotlib.pyplot as plt
 
 	fig, ax = plt.subplots()
+	# Visualize differences as a signed delta signal.
 	ax.plot(delta, label="Delta (B - A)", color="black")
 	ax.axhline(0, color="gray", linestyle="--", linewidth=1)
 	ax.set_xlabel("Sample")
@@ -794,6 +1040,7 @@ def analysis_to_exports(analysis: dict) -> tuple[str, str]:
 
 def main():
 	"""Streamlit GUI entry point."""
+	# Initialize UI and persistent storage.
 	st.set_page_config(page_title="ECG Graph Extraction", layout="wide")
 	init_db()
 	enforce_session_timeout()
@@ -801,6 +1048,48 @@ def main():
 	st.title("ECG Graph Extraction and Analysis")
 	st.caption("Upload ECG images, digitize waveforms, extract features, compare, and store results.")
 
+	with st.sidebar:
+		st.header("User Access")
+		if is_user_management_enabled():
+			# Render login/logout flow depending on session state.
+			if st.session_state.get("authenticated"):
+				st.write(f"Signed in as: {st.session_state.get('username')}")
+				st.write(f"Role: {st.session_state.get('role')}")
+				if st.button("Logout"):
+					user = {
+						"id": st.session_state.get("user_id"),
+						"username": st.session_state.get("username"),
+					}
+					log_audit("logout", "success", user)
+					st.session_state.clear()
+					st.rerun()
+			else:
+				with st.form("login_form"):
+					username = st.text_input("Username")
+					password = st.text_input("Password", type="password")
+					submitted = st.form_submit_button("Login")
+					if submitted:
+						user = authenticate_user(username, password)
+						if user:
+							st.session_state["authenticated"] = True
+							st.session_state["user_id"] = user["id"]
+							st.session_state["username"] = user["username"]
+							st.session_state["role"] = user["role"]
+							st.session_state["last_activity"] = datetime.utcnow().isoformat()
+							log_audit("login", "success", user)
+							st.rerun()
+						log_audit("login", "failure", {"username": username})
+						st.error("Invalid credentials or user disabled.")
+		else:
+			st.info("User management is disabled.")
+			if st.button("Enable User Management"):
+				set_setting("user_management_enabled", "true")
+				st.rerun()
+
+	default_admin_created = get_setting("default_admin_created") == "true"
+	if default_admin_created and is_user_management_enabled():
+		# Surface the default admin reminder in case password needs reset.
+		st.warning("Default admin account exists (username: admin). Please reset the password.")
 
 	tab_analyze, tab_compare, tab_records, *tab_admin = st.tabs(base_tabs)
 
@@ -810,6 +1099,7 @@ def main():
 		uploaded = st.file_uploader("Upload ECG image (PNG/JPG/PDF)", type=["png", "jpg", "jpeg", "pdf"])
 
 		if uploaded:
+			# Load uploaded file and reset cached analysis on file change.
 			image, image_bytes, ext = load_image_from_upload(uploaded)
 			if image is None:
 				st.error("Unable to read the uploaded file.")
@@ -843,6 +1133,7 @@ def main():
 				st.session_state["analysis"] = analysis
 
 			if "analysis" in st.session_state:
+				# Render waveform plot, metrics, and export options.
 				analysis = st.session_state["analysis"]
 				signal = np.array(analysis["signal_mV"])
 				time_ms = np.array(analysis["time_ms"])
@@ -860,6 +1151,7 @@ def main():
 					root_cause_time = st.text_input("Time of root cause")
 					submitted = st.form_submit_button("Save record")
 					if submitted:
+						# Respect privacy settings when storing identifiers.
 						allow_patient_storage = get_setting("allow_patient_data_storage", "false") == "true"
 						if not allow_patient_storage and patient_id:
 							patient_id = None
@@ -890,6 +1182,7 @@ def main():
 		def get_analysis_from_source(label: str, source_choice: str):
 			"""Load analysis from DB or run a new analysis from upload."""
 			if source_choice == "From records":
+				# Load available records and map the selection to an ID.
 				records = load_records()
 				if records.empty:
 					st.info("No records available.")
@@ -907,6 +1200,7 @@ def main():
 				key=f"upload_{label}",
 			)
 			if upload:
+				# Run analysis from the uploaded file on-demand.
 				image, _, _ = load_image_from_upload(upload)
 				if image is None:
 					st.error("Unable to read the uploaded file.")
@@ -1054,6 +1348,7 @@ def main():
 				)
 
 				if delete_clicked:
+					# Require explicit confirmation before deletion.
 					selected_ids = edited.loc[edited["Delete"] == True, "id"].tolist()  # noqa: E712
 					if not selected_ids:
 						st.warning("No records selected.")
@@ -1117,6 +1412,7 @@ def main():
 				value=get_setting("restrict_patient_identifiers", "true") == "true",
 			)
 			if st.button("Save settings"):
+				# Persist all settings and log the change.
 				set_setting("user_management_enabled", "true" if user_mgmt_enabled else "false")
 				set_setting("session_timeout_minutes", str(int(session_timeout)))
 				set_setting("auth_mode", auth_mode)
@@ -1137,6 +1433,7 @@ def main():
 			st.dataframe(users_df, use_container_width=True)
 
 			with st.expander("Create user"):
+				# Admin flow for adding new accounts.
 				new_username = st.text_input("Username", key="new_username")
 				new_display = st.text_input("Display name", key="new_display")
 				new_role = st.selectbox(
@@ -1165,6 +1462,7 @@ def main():
 						st.rerun()
 
 			with st.expander("Update user"):
+				# Update existing user metadata and role assignments.
 				user_options = {f"{row.username} ({row.role})": row.id for row in users_df.itertuples(index=False)}
 				if user_options:
 					selected_label = st.selectbox("Select user", list(user_options.keys()))
@@ -1192,6 +1490,7 @@ def main():
 						st.rerun()
 
 			with st.expander("Reset password"):
+				# Administrative password reset flow.
 				user_options = {f"{row.username}": row.id for row in users_df.itertuples(index=False)}
 				if user_options:
 					selected_label = st.selectbox("Select user", list(user_options.keys()), key="reset_user")
@@ -1214,6 +1513,7 @@ def main():
 							st.success("Password reset.")
 
 			st.markdown("### Audit Logs")
+			# Filterable audit log viewer.
 			log_limit = st.slider("Log entries", min_value=50, max_value=500, value=200, step=50)
 			logs_df = list_audit_logs(limit=log_limit)
 			st.dataframe(logs_df, use_container_width=True)
