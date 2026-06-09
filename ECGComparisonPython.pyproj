@@ -25,6 +25,7 @@
   <ItemGroup>
     <Compile Include="ECGComparisonPython.py" />
     <Compile Include="test_ecg_pipeline.py" />
+    <Compile Include="test_functionality.py" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="venv\">
@@ -38,6 +39,7 @@
     </Interpreter>
   </ItemGroup>
   <ItemGroup>
+    <Content Include="ERROR_RESOLUTION_REPORT.md" />
     <Content Include="start_server.bat" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
