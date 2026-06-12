@@ -7,13 +7,30 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 
+# Image processing, PDF handling and numerical libraries
 import cv2
 import fitz
 import numpy as np
 import pandas as pd
 import streamlit as st
+import data_export
 from PIL import Image
 from scipy.signal import find_peaks, savgol_filter
+
+"""
+ECGComparisonPython - core application module
+
+This module contains the main functionality for the ECG image digitization
+and analysis application. It includes:
+- Persistent storage helpers and an SQLite-backed DB wrapper (ECGDatabase)
+- Image-to-signal processing and analysis (ECGAnalyzer)
+- Signal alignment helpers (ECGAligner)
+- Export and UI integration helpers (ECGExporter + Streamlit glue)
+
+The code is organized so that tests and the Streamlit UI can call
+small, well-defined functions (module-level wrappers around class methods).
+Comments placed near each class and function explain purpose and usage.
+"""
 
 
 # Database schema version for migrations
@@ -50,6 +67,17 @@ class StoragePaths:
 
 
 class ECGDatabase:
+    # The ECGDatabase class encapsulates all persistence concerns for the
+    # application. It is responsible for:
+    # - Ensuring on-disk storage for images exists
+    # - Managing the SQLite connection and PRAGMA settings (foreign keys)
+    # - Creating and migrating tables safely across schema versions
+    # - Providing small helper methods used by the UI and tests to load,
+    #   save and delete records in a transactional and consistent way.
+    #
+    # The instance is deliberately lightweight: callers should use the
+    # module-level StoragePaths.current() helper to provide path configuration
+    # so tests can monkeypatch locations without changing global constants.
     def __init__(self, paths: StoragePaths, schema_version: int = DB_SCHEMA_VERSION):
         self._paths = paths
         self._schema_version = int(schema_version)
@@ -300,17 +328,28 @@ class ECGDatabase:
 
     def save_image_bytes(self, image_bytes: bytes, ext: str) -> str:
         # Store image bytes on disk and return the filename.
+        #
+        # This method does not assume exclusive ownership of the image
+        # directory and therefore only writes the file when it does not
+        # already exist (deduplication by content hash). The filename is
+        # derived from the high-entropy SHA-256 hash of the bytes which
+        # reduces the chance of collisions and simplifies garbage
+        # collection when records are deleted.
         self.ensure_storage()
         image_hash = self.compute_hash(image_bytes)
         filename = f"{image_hash[:16]}{ext}"
         path = os.path.join(self._paths.image_dir, filename)
+        # Only write when missing to avoid race conditions and repeated I/O.
         if not os.path.exists(path):
             with open(path, "wb") as f:
                 f.write(image_bytes)
         return filename
 
     def load_records(self) -> pd.DataFrame:
-        # Load summarized record list for the Records tab.
+        # Load summarized record list for the Records tab. Returns a
+        # pandas.DataFrame suitable for direct display in Streamlit. The
+        # SQL is intentionally narrow (only summary columns) to keep the
+        # result fast and compact for the UI.
         try:
             with sqlite3.connect(self._paths.db_path) as conn:
                 return pd.read_sql_query(
@@ -318,6 +357,8 @@ class ECGDatabase:
                     conn,
                 )
         except sqlite3.Error as e:
+            # Wrap lower-level DB errors in a RuntimeError so callers have
+            # a consistent exception type to handle in the UI.
             raise RuntimeError(f"Failed to load records: {e}")
 
     def load_record(self, record_id: int) -> dict:
@@ -709,6 +750,21 @@ def align_signals(signal_a: np.ndarray, signal_b: np.ndarray, r_a: list, r_b: li
 def analysis_to_exports(analysis: dict) -> tuple[str, str]:
     """Convert analysis dict to CSV and JSON export strings."""
     return _exporter().analysis_to_exports(analysis)
+
+
+def export_all_tables_csv(output_dir: str | None = None) -> list[str]:
+    """Export all DB tables to individual CSV files. Returns list of file paths."""
+    return data_export.export_all_tables_to_csv(paths=StoragePaths.current(), output_dir=output_dir)
+
+
+def export_all_tables_excel(excel_path: str | None = None) -> str:
+    """Export all DB tables into a single Excel workbook. Returns file path."""
+    return data_export.export_all_tables_to_excel(paths=StoragePaths.current(), excel_path=excel_path)
+
+
+def export_all_data(output_dir: str | None = None, excel_path: str | None = None) -> dict:
+    """Convenience wrapper to export CSV files and an Excel workbook. Returns dict with paths."""
+    return data_export.export_all_data(paths=StoragePaths.current(), output_dir=output_dir, excel_path=excel_path)
 
 
 def ensure_storage():
@@ -1611,6 +1667,34 @@ def main():
             log_limit = st.slider("Log entries", min_value=50, max_value=500, value=200, step=50)
             logs_df = list_audit_logs(limit=log_limit)
             st.dataframe(logs_df, use_container_width=True)
+
+            st.markdown("### Data Export")
+            st.write("Export the entire database to CSV files and a combined Excel workbook.")
+            if st.button("Export all data (CSV + Excel)"):
+                try:
+                    exports = export_all_data()
+                    excel_path = exports.get("excel_file")
+                    csv_files = exports.get("csv_files")
+                    st.success("Export completed")
+                    # Provide download for the Excel file and list CSVs
+                    if excel_path and os.path.exists(excel_path):
+                        with open(excel_path, "rb") as f:
+                            st.download_button(
+                                label="Download Excel workbook",
+                                data=f.read(),
+                                file_name=os.path.basename(excel_path),
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                on_click=lambda: log_audit("export_all_data", "success", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")}),
+                            )
+                    if csv_files:
+                        st.write("CSV files:")
+                        for p in csv_files:
+                            if os.path.exists(p):
+                                with open(p, "rb") as f:
+                                    st.download_button(label=f"Download {os.path.basename(p)}", data=f.read(), file_name=os.path.basename(p), mime="text/csv")
+                except Exception as e:
+                    st.error(f"Export failed: {e}")
+                    log_audit("export_all_data", "failure", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")}, str(e))
 
 
 if __name__ == "__main__":

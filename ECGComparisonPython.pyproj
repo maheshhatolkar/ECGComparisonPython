@@ -23,6 +23,7 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="data_export.py" />
     <Compile Include="ECGComparisonPython.py" />
     <Compile Include="test_ecg_pipeline.py" />
     <Compile Include="test_functionality.py" />
