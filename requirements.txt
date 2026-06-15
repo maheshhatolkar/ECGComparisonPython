@@ -8,3 +8,5 @@ pillow
 pymupdf
 pypdf
 pytest
+openpyxl
+XlsxWriter

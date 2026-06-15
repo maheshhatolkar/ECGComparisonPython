@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from typing import List, Dict, Optional
+import zipfile
 
 import pandas as pd
 
@@ -80,8 +81,38 @@ def export_all_tables_to_excel(paths: Optional[StoragePaths] = None, excel_path:
     # that to avoid errors from long table names.
     with sqlite3.connect(paths.db_path) as conn:
         table_names = _get_table_names(conn)
-        # Use pandas ExcelWriter; let pandas pick engine
-        with pd.ExcelWriter(excel_path) as writer:
+    # Try to pick an available Excel writer engine. pandas defaults to
+    # openpyxl for .xlsx files but that package may not be installed in
+    # every environment. Fall back to XlsxWriter if available. If neither
+    # is installed, gracefully fall back to zipping CSV exports so the
+    # user still receives a single archive containing all table CSVs.
+    engine = None
+    try:
+        import openpyxl  # noqa: F401
+        engine = "openpyxl"
+    except Exception:
+        try:
+            import xlsxwriter  # noqa: F401
+            engine = "xlsxwriter"
+        except Exception:
+            engine = None
+
+    if engine is None:
+        # Fallback: write CSVs then zip them. Use .zip target when no Excel
+        # engine is available so the caller still gets a single downloadable
+        # file containing all tables.
+        csv_files = export_all_tables_to_csv(paths=paths, output_dir=exports_dir)
+        zip_path = excel_path
+        # If the default excel_path ends with .xlsx, switch to .zip
+        if zip_path.endswith(".xlsx"):
+            zip_path = zip_path[:-5] + ".zip"
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for fpath in csv_files:
+                zf.write(fpath, arcname=os.path.basename(fpath))
+        return zip_path
+
+    # Use pandas ExcelWriter with the selected engine
+    with pd.ExcelWriter(excel_path, engine=engine) as writer:
             for table in table_names:
                 try:
                     df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
