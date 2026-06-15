@@ -25,6 +25,7 @@
   <ItemGroup>
     <Compile Include="data_export.py" />
     <Compile Include="ECGComparisonPython.py" />
+    <Compile Include="mobile_backend\main.py" />
     <Compile Include="test_ecg_pipeline.py" />
     <Compile Include="test_functionality.py" />
   </ItemGroup>
@@ -40,8 +41,24 @@
     </Interpreter>
   </ItemGroup>
   <ItemGroup>
+    <Content Include=".github\copilot-instructions.md" />
     <Content Include="ERROR_RESOLUTION_REPORT.md" />
+    <Content Include="mobile_app\App.js" />
+    <Content Include="mobile_app\package.json" />
+    <Content Include="mobile_app\README.md" />
+    <Content Include="mobile_app\screens\AdminAnalysisScreen.js" />
+    <Content Include="mobile_app\screens\AnalyzeScreen.js" />
+    <Content Include="mobile_app\screens\CompareScreen.js" />
+    <Content Include="mobile_app\screens\LoginScreen.js" />
+    <Content Include="mobile_app\screens\RecordsScreen.js" />
+    <Content Include="mobile_backend\requirements.txt" />
     <Content Include="start_server.bat" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include=".github\" />
+    <Folder Include="mobile_app\" />
+    <Folder Include="mobile_app\screens\" />
+    <Folder Include="mobile_backend\" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
