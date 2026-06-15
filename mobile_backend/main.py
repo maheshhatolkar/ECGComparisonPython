@@ -1,9 +1,13 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import io
 import os
+import time
+import hmac
+import hashlib
+import base64
 from typing import Optional
 
 # Import analysis functions from the existing module
@@ -23,6 +27,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Simple token signing for prototype mobile auth
+SECRET_KEY = os.environ.get("MOBILE_SECRET", "devsecret").encode()
+TOKEN_TTL_SECONDS = 60 * 60 * 24  # 24 hours
+
+
+def create_token(username: str) -> str:
+    ts = str(int(time.time()))
+    payload = f"{username}|{ts}"
+    sig = hmac.new(SECRET_KEY, payload.encode(), hashlib.sha256).hexdigest()
+    token = base64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
+    return token
+
+
+def verify_token(token: str) -> dict | None:
+    try:
+        raw = base64.urlsafe_b64decode(token.encode()).decode()
+        username, ts, sig = raw.rsplit("|", 2)
+        expected = hmac.new(SECRET_KEY, f"{username}|{ts}".encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return None
+        if int(time.time()) - int(ts) > TOKEN_TTL_SECONDS:
+            return None
+        user = get_user_by_username(username)
+        return user
+    except Exception:
+        return None
 
 
 @app.post("/analyze")
@@ -54,8 +85,9 @@ async def login(username: str = Form(...), password: str = Form(...)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not verify_password(password, user["password_salt"], user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    # Return a minimal user profile; client may store this to gate admin UI
-    return JSONResponse(content={"id": user["id"], "username": user["username"], "role": user["role"]})
+    token = create_token(username)
+    # Return a minimal user profile and token
+    return JSONResponse(content={"id": user["id"], "username": user["username"], "role": user["role"], "token": token})
 
 
 @app.get("/records")
@@ -93,7 +125,8 @@ async def api_save_record(
         meta = {"note": metadata}
 
     # Save record using existing save_record helper which returns record id
-    record_id = save_record(meta, contents, os.path.splitext(file.filename)[1], analysis)
+    ext = os.path.splitext(file.filename)[1] or ".png"
+    record_id = save_record(meta, contents, ext, analysis)
     return JSONResponse(content={"record_id": record_id})
 
 
@@ -125,6 +158,7 @@ async def api_compare(record_a: Optional[int] = Form(None), record_b: Optional[i
         "delta_metrics": delta_metrics,
         "aligned_a": aligned_a.tolist(),
         "aligned_b": aligned_b.tolist(),
+        "aligned_lengths": [len(aligned_a), len(aligned_b)],
     })
 
 
