@@ -1,5 +1,11 @@
 #!/usr/bin/env python
-"""Quick functionality test for ECGComparisonPython"""
+"""Quick functionality smoke tests for ECGComparisonPython.
+
+This script provides lightweight sanity checks that can be executed
+manually during development to validate database initialization, analysis
+pipeline execution, and export formatting without running the full test
+suite.
+"""
 
 import ECGComparisonPython as app
 import numpy as np

@@ -1,3 +1,11 @@
+"""Legacy unit tests for the ECG analysis pipeline.
+
+This module contains earlier/legacy tests used during development to
+exercise waveform extraction, metrics calculation and export helpers.
+These tests help ensure regressions are caught when refactoring core
+analysis functions.
+"""
+
 import json
 import os
 import numpy as np

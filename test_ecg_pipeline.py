@@ -1,3 +1,10 @@
+"""Unit tests covering the ECG analysis pipeline and helper utilities.
+
+These tests exercise typical usage (happy path) as well as error and
+edge-case behavior for analysis, alignment, and export helpers. They are
+designed to run quickly and provide deterministic coverage for core logic.
+"""
+
 import json
 import os
 import numpy as np
