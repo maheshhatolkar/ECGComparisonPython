@@ -16,6 +16,10 @@ from ECGComparisonPython import build_analysis, compute_hash, StoragePaths, expo
 from PIL import Image
 import numpy as np
 import tempfile
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import base64
 
 app = FastAPI(title="ECGComparisonMobileBackend")
 

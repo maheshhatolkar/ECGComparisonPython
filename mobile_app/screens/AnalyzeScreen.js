@@ -49,6 +49,15 @@ export default function AnalyzeScreen({ route }) {
         <View style={{ marginTop: 16 }}>
           <Text>Result:</Text>
           <Text>{JSON.stringify(result).slice(0, 1000)}</Text>
+          {result.time_ms && (
+            <Button title="View waveform" onPress={async () => {
+              const form = new FormData();
+              form.append('analysis', JSON.stringify(result));
+              const resp = await fetch('http://10.0.2.2:8000/analysis/plot', { method: 'POST', body: form });
+              const j = await resp.json();
+              navigation.navigate('Compare', { plot: 'data:image/png;base64,' + j.image_base64 });
+            }} />
+          )}
         </View>
       )}
     </ScrollView>
