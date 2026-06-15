@@ -456,6 +456,15 @@ class ECGDatabase:
 
 class ECGAnalyzer:
     def preprocess_image(self, image: Image.Image) -> dict:
+        """Preprocess an RGB PIL Image for waveform extraction.
+
+        This performs conversion to grayscale, denoising and adaptive
+        contrast enhancement (CLAHE). Returns a dict with keys:
+        - "gray": the raw grayscale image as a numpy array
+        - "enhanced": the contrast-enhanced image used by downstream steps
+
+        Raises RuntimeError on failure with an explanatory message.
+        """
         # Convert to grayscale and apply denoise + contrast enhancement.
         try:
             rgb = np.array(image)
@@ -473,6 +482,13 @@ class ECGAnalyzer:
             raise RuntimeError(f"Image preprocessing failed: {e}")
 
     def detect_grid_spacing(self, enhanced_gray: np.ndarray) -> float | None:
+        """Estimate the median grid line spacing (in pixels) from an enhanced
+        grayscale ECG image.
+
+        The algorithm detects prominent horizontal and vertical line peaks and
+        returns the median spacing between detected lines. Returns None when
+        spacing cannot be determined.
+        """
         # Detect gridlines and estimate median spacing between them.
         try:
             h, w = enhanced_gray.shape
@@ -513,6 +529,13 @@ class ECGAnalyzer:
             return None
 
     def digitize_waveform(self, enhanced_gray: np.ndarray) -> np.ndarray:
+        """Digitize the ECG waveform by tracing darkest/most-contrasting
+        pixels across each column of the enhanced grayscale image.
+
+        The function returns a 1-D numpy array of vertical pixel coordinates
+        (float) representing the waveform trace, smoothed with a Savitzky-
+        Golay filter for noise reduction.
+        """
         # Trace the darkest pixel per column to build a waveform.
         try:
             h, w = enhanced_gray.shape
@@ -537,12 +560,25 @@ class ECGAnalyzer:
             raise RuntimeError(f"Waveform digitization failed: {e}")
 
     def waveform_to_signal(self, y_pixels: np.ndarray, mV_per_pixel: float) -> np.ndarray:
+        """Convert waveform pixel coordinates to a millivolt (mV) signal.
+
+        The baseline is estimated as the median y coordinate and subtracted so
+        that the resulting signal is centered around 0 mV. Returns a numpy
+        array of floats in millivolts.
+        """
         # Convert from image coordinates to baseline-centered amplitudes.
         baseline = np.median(y_pixels)
         return (baseline - y_pixels) * mV_per_pixel
 
     def detect_r_peaks(self, signal: np.ndarray, ms_per_pixel: float, prominence_factor: float = 0.5):
-        # Use distance and prominence heuristics to find R-peak's.
+        """Detect R-peaks in the ECG signal using scipy.find_peaks.
+
+        The function computes a minimum sample distance derived from an
+        expected refractory period (roughly 200 ms) and a prominence based on
+        the signal's standard deviation scaled by prominence_factor.
+        Returns an array of peak indices.
+        """
+        # Use distance and prominence heuristics to find R-peaks.
         distance = int(200 / ms_per_pixel)
         distance = max(distance, 1)
         prominence = max(0.05, float(np.std(signal) * prominence_factor))
@@ -550,6 +586,13 @@ class ECGAnalyzer:
         return peaks
 
     def extract_features(self, signal: np.ndarray, ms_per_pixel: float, r_peaks: np.ndarray) -> dict:
+        """Extract P, Q, R, S, T feature indices around each detected R-peak.
+
+        Windows are defined in milliseconds converted to samples using
+        ms_per_pixel. The heuristic locates local extrema around R-peaks to
+        approximate the positions of P/Q/S/T wave components. Returns a
+        dictionary with lists of indices for each feature.
+        """
         # For each R-peak, infer neighboring P/Q/S/T points using windows.
         features = {
             "p_peaks": [],
@@ -589,6 +632,12 @@ class ECGAnalyzer:
         return features
 
     def compute_metrics(self, features: dict, ms_per_pixel: float) -> dict:
+        """Compute clinical metrics (HR, PR/QRS/QT intervals) from features.
+
+        Returns a dictionary containing heart_rate_bpm and interval estimates
+        in milliseconds. Where insufficient data exists to compute a metric,
+        the value will be None.
+        """
         # Calculate heart rate and interval metrics from detected indices.
         r_peaks = np.array(features["r_peaks"], dtype=int)
         if len(r_peaks) >= 2:
@@ -618,6 +667,19 @@ class ECGAnalyzer:
         }
 
     def build_analysis(self, image: Image.Image, pixels_per_mm: float, prominence_factor: float) -> dict:
+        """Execute the full image-to-analysis pipeline.
+
+        Steps performed:
+        1. Preprocess the image (grayscale, denoise, contrast).
+        2. Digitize the waveform trace.
+        3. Convert pixels to millivolts and compute timing (ms per sample).
+        4. Detect R-peaks and extract waveform features.
+        5. Compute summary metrics and package the results into a dict
+           containing signal_mV, time_ms, features and metrics.
+
+        Raises RuntimeError on failure and returns a serializable dict on
+        success suitable for UI display or export.
+        """
         # Run full pipeline: preprocess -> digitize -> detect peaks -> metrics.
         try:
             if pixels_per_mm <= 0:
@@ -650,6 +712,12 @@ class ECGAnalyzer:
 
 class ECGAligner:
     def align_signals(self, signal_a: np.ndarray, signal_b: np.ndarray, r_a: list, r_b: list) -> tuple:
+        """Align two ECG signals either by R-peak alignment or cross-correlation.
+
+        Returns a tuple (aligned_a, aligned_b, method) where aligned_* are
+        numpy arrays cropped to the same length and method is the alignment
+        technique used ("r-peak" or "cross-correlation").
+        """
         # Align by first R-peak if available, else use cross-correlation.
         if r_a and r_b:
             shift = r_b[0] - r_a[0]
@@ -677,6 +745,11 @@ class ECGAligner:
 
 class ECGExporter:
     def metrics_table(self, metrics: dict) -> pd.DataFrame:
+        """Format a metrics dictionary into a pandas DataFrame for display.
+
+        Produces two columns: 'Metric' and 'Value', suitable for rendering in
+        tables or converting to CSV for export.
+        """
         # Convert metrics into a tabular format for display/export.
         rows = []
         for key, label in [
@@ -689,6 +762,11 @@ class ECGExporter:
         return pd.DataFrame(rows)
 
     def analysis_to_exports(self, analysis: dict) -> tuple[str, str]:
+        """Create CSV and pretty-printed JSON representations of analysis.
+
+        Returns a tuple (csv_string, json_string) which callers can send as
+        file downloads or attach to exported reports.
+        """
         # Build CSV and JSON payloads for downloads.
         csv_df = self.metrics_table(analysis["metrics"])
         csv_data = csv_df.to_csv(index=False)
