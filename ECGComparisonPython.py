@@ -1230,10 +1230,26 @@ def main():
 
     # Define the top-level tabs. Include Admin tab only when user management is enabled.
     base_tabs = ["Analyze", "Compare", "Records"]
+    # Add an Admin-only Analysis tab (visible only to Administrator role)
+    if user_has_role(["Administrator"]):
+        base_tabs.append("Analysis")
     if is_user_management_enabled():
         base_tabs.append("Admin")
 
-    tab_analyze, tab_compare, tab_records, *tab_admin = st.tabs(base_tabs)
+    tabs = st.tabs(base_tabs)
+    # Map tabs to variables by position so the code works regardless of which
+    # optional tabs were added above.
+    tab_analyze = tabs[0]
+    tab_compare = tabs[1]
+    tab_records = tabs[2]
+    tab_analysis = None
+    tab_admin_obj = None
+    next_idx = 3
+    if "Analysis" in base_tabs:
+        tab_analysis = tabs[next_idx]
+        next_idx += 1
+    if "Admin" in base_tabs:
+        tab_admin_obj = tabs[next_idx]
 
     with tab_analyze:
         require_roles(["Administrator", "Clinician", "Researcher"])
@@ -1278,6 +1294,9 @@ def main():
                 # Render waveform plot, metrics, and export options.
                 analysis = st.session_state["analysis"]
                 signal = np.array(analysis["signal_mV"])
+
+    # Admin-only Analysis tab logic moved to after the Analyze save form to avoid
+    # interfering with the per-upload analysis rendering flow above.
                 time_ms = np.array(analysis["time_ms"])
 
                 st.pyplot(render_signal_plot(signal, time_ms, analysis["features"]))
@@ -1534,8 +1553,8 @@ def main():
                 if is_user_management_enabled() and not user_has_role(["Administrator"]):
                     st.info("Only Administrators can delete records.")
 
-    if tab_admin:
-        with tab_admin[0]:
+    if tab_admin_obj:
+        with tab_admin_obj:
             require_roles(["Administrator"])
             st.subheader("User Management")
             st.caption("Admin-only controls for access, users, and audit logs.")
@@ -1668,15 +1687,21 @@ def main():
             logs_df = list_audit_logs(limit=log_limit)
             st.dataframe(logs_df, use_container_width=True)
 
-            st.markdown("### Data Export")
-            st.write("Export the entire database to CSV files and a combined Excel workbook.")
+            # Data export removed from Admin tab. Use the Analysis tab for exports and table views.
+
+    # Render the Admin-only Analysis tab if present (created only for Administrators)
+    if tab_analysis:
+        with tab_analysis:
+            require_roles(["Administrator"])
+            st.subheader("Analysis")
+            st.write("Export the entire database to CSV files and a combined Excel workbook. View tables below.")
+
             if st.button("Export all data (CSV + Excel)"):
                 try:
-                    exports = export_all_data()
+                    exports = data_export.export_all_data()
                     excel_path = exports.get("excel_file")
                     csv_files = exports.get("csv_files")
                     st.success("Export completed")
-                    # Provide download for the Excel file and list CSVs
                     if excel_path and os.path.exists(excel_path):
                         with open(excel_path, "rb") as f:
                             st.download_button(
@@ -1684,7 +1709,7 @@ def main():
                                 data=f.read(),
                                 file_name=os.path.basename(excel_path),
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                on_click=lambda: log_audit("export_all_data", "success", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")}),
+                                on_click=lambda: log_audit("export_all_data", "success", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")} ),
                             )
                     if csv_files:
                         st.write("CSV files:")
@@ -1695,6 +1720,23 @@ def main():
                 except Exception as e:
                     st.error(f"Export failed: {e}")
                     log_audit("export_all_data", "failure", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")}, str(e))
+
+            # Present all database tables in-page as dataframes
+            try:
+                paths = StoragePaths.current()
+                conn = sqlite3.connect(paths.db_path)
+                table_names = data_export._get_table_names(conn)
+                for table in table_names:
+                    try:
+                        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+                    except Exception:
+                        st.warning(f"Unable to read table: {table}")
+                        continue
+                    st.markdown(f"### {table}")
+                    st.dataframe(df, use_container_width=True)
+                conn.close()
+            except Exception as e:
+                st.error(f"Failed to load tables: {e}")
 
 
 if __name__ == "__main__":
