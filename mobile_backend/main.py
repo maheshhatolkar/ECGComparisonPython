@@ -7,7 +7,8 @@ import os
 from typing import Optional
 
 # Import analysis functions from the existing module
-from ECGComparisonPython import build_analysis, compute_hash, StoragePaths, export_all_data, load_records, load_record, save_record
+import json
+from ECGComparisonPython import build_analysis, compute_hash, StoragePaths, export_all_data, load_records, load_record, save_record, get_user_by_username, verify_password
 from PIL import Image
 import numpy as np
 import tempfile
@@ -44,6 +45,17 @@ async def analyze_image(pixels_per_mm: float = Form(...), prominence: float = Fo
         return obj
 
     return JSONResponse(content=_normalize(analysis))
+
+
+@app.post("/login")
+async def login(username: str = Form(...), password: str = Form(...)):
+    user = get_user_by_username(username)
+    if not user or not user.get("enabled"):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not verify_password(password, user["password_salt"], user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    # Return a minimal user profile; client may store this to gate admin UI
+    return JSONResponse(content={"id": user["id"], "username": user["username"], "role": user["role"]})
 
 
 @app.get("/records")
