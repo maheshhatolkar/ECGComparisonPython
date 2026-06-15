@@ -26,7 +26,10 @@ export default function AnalyzeScreen({ route }) {
     form.append('pixels_per_mm', '20.0');
     form.append('prominence', '0.5');
     try {
-      const resp = await fetch('http://10.0.2.2:8000/analyze', { method: 'POST', body: form });
+      // include token in header if available
+      const headers = {};
+      if (route.params?.token) headers['Authorization'] = `Bearer ${route.params.token}`;
+      const resp = await fetch('http://10.0.2.2:8000/analyze', { method: 'POST', body: form, headers });
       const json = await resp.json();
       setResult(json);
     } catch (e) {

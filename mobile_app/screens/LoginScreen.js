@@ -17,7 +17,8 @@ export default function LoginScreen({ navigation }) {
         return;
       }
       const data = await resp.json();
-      navigation.replace('Analyze', { user: data });
+      // store token in-memory for now and pass to next screen
+      navigation.replace('Analyze', { user: data, token: data.token });
     } catch (e) {
       setError('Network error');
     }
