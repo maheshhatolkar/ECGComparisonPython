@@ -1,1 +1,0 @@
-python.exe -m streamlit run ECGCOMPARISONPYTHON.py

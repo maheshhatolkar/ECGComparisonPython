@@ -36,7 +36,6 @@ import time
 import hmac
 import hashlib
 import base64
-from typing import Optional
 
 # Standard library JSON handling
 import json
@@ -200,6 +199,7 @@ async def get_records():
     list of dictionaries for easy JSON consumption by the mobile client.
     """
     df = load_records()
+    df = df.replace({np.nan: None})
     return JSONResponse(content=df.to_dict(orient="records"))
 
 
@@ -250,7 +250,7 @@ async def api_save_record(
 
 
 @app.post("/compare")
-async def api_compare(record_a: Optional[int] = Form(None), record_b: Optional[int] = Form(None), analysis_a: Optional[dict] = Form(None), analysis_b: Optional[dict] = Form(None)):
+async def api_compare(record_a: int | None = Form(None), record_b: int | None = Form(None), analysis_a: dict | None = Form(None), analysis_b: dict | None = Form(None)):
     """Compare two ECG analyses (either by record id or inline analysis JSON).
 
     The endpoint returns alignment metadata and numeric delta metrics so the

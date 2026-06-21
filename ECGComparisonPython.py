@@ -365,23 +365,14 @@ class ECGDatabase:
         # Fetch a single record with its stored analysis payload.
         try:
             with sqlite3.connect(self._paths.db_path) as conn:
-                row = conn.execute(
+                cursor = conn.execute(
                     "SELECT * FROM ecg_records WHERE id = ?",
                     (record_id,),
-                ).fetchone()
+                )
+                row = cursor.fetchone()
             if not row:
                 return {}
-            columns = [
-                "id",
-                "patient_id",
-                "ecg_datetime",
-                "root_cause",
-                "root_cause_time",
-                "image_filename",
-                "image_hash",
-                "analysis_json",
-                "created_at",
-            ]
+            columns = [description[0] for description in cursor.description]
             data = dict(zip(columns, row))
             data["analysis"] = json.loads(data["analysis_json"])
             return data
@@ -570,7 +561,7 @@ class ECGAnalyzer:
         baseline = np.median(y_pixels)
         return (baseline - y_pixels) * mV_per_pixel
 
-    def detect_r_peaks(self, signal: np.ndarray, ms_per_pixel: float, prominence_factor: float = 0.5):
+    def detect_r_peaks(self, signal: np.ndarray, ms_per_pixel: float, prominence_factor: float = 0.5) -> np.ndarray:
         """Detect R-peaks in the ECG signal using scipy.find_peaks.
 
         The function computes a minimum sample distance derived from an
@@ -905,7 +896,7 @@ def verify_password(password: str, salt: str, password_hash: str) -> bool:
 
 def get_user_by_username(username: str) -> dict | None:
     # Retrieve user credentials and profile by username.
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(StoragePaths.current().db_path) as conn:
         row = conn.execute(
             "SELECT id, username, display_name, role, password_hash, password_salt, enabled FROM users WHERE username = ?",
             (username,),
@@ -925,7 +916,7 @@ def get_user_by_username(username: str) -> dict | None:
 
 def list_users() -> pd.DataFrame:
     # List user accounts for the admin view.
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(StoragePaths.current().db_path) as conn:
         return pd.read_sql_query(
             "SELECT id, username, display_name, role, enabled, created_at, updated_at FROM users ORDER BY username",
             conn,
@@ -937,7 +928,7 @@ def create_user(username: str, display_name: str, role: str, password: str, enab
     salt = secrets.token_hex(16)
     password_hash = hash_password(password, salt)
     now = datetime.utcnow().isoformat()
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(StoragePaths.current().db_path) as conn:
         conn.execute(
             """
             INSERT INTO users (username, display_name, role, password_hash, password_salt, enabled, created_at, updated_at)
@@ -950,7 +941,7 @@ def create_user(username: str, display_name: str, role: str, password: str, enab
 def update_user(user_id: int, display_name: str, role: str, enabled: bool) -> None:
     # Update profile metadata and enabled state.
     now = datetime.utcnow().isoformat()
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(StoragePaths.current().db_path) as conn:
         conn.execute(
             """
             UPDATE users SET display_name = ?, role = ?, enabled = ?, updated_at = ? WHERE id = ?
@@ -964,7 +955,7 @@ def reset_password(user_id: int, new_password: str) -> None:
     salt = secrets.token_hex(16)
     password_hash = hash_password(new_password, salt)
     now = datetime.utcnow().isoformat()
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(StoragePaths.current().db_path) as conn:
         conn.execute(
             """
             UPDATE users SET password_hash = ?, password_salt = ?, updated_at = ? WHERE id = ?
@@ -975,7 +966,7 @@ def reset_password(user_id: int, new_password: str) -> None:
 
 def log_audit(event_type: str, outcome: str, user: dict | None = None, details: str | None = None) -> None:
     # Insert a row into audit_logs for security and traceability.
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(StoragePaths.current().db_path) as conn:
         conn.execute(
             """
             INSERT INTO audit_logs (timestamp, event_type, user_id, username, outcome, details)
@@ -994,7 +985,7 @@ def log_audit(event_type: str, outcome: str, user: dict | None = None, details: 
 
 def list_audit_logs(limit: int = 200) -> pd.DataFrame:
     # Return the latest audit rows for the admin view.
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(StoragePaths.current().db_path) as conn:
         return pd.read_sql_query(
             "SELECT timestamp, event_type, username, outcome, details FROM audit_logs ORDER BY id DESC LIMIT ?",
             conn,
@@ -1158,7 +1149,7 @@ def waveform_to_signal(y_pixels: np.ndarray, mV_per_pixel: float) -> np.ndarray:
     return _analyzer().waveform_to_signal(y_pixels, mV_per_pixel)
 
 
-def detect_r_peaks(signal: np.ndarray, ms_per_pixel: float, prominence_factor: float = 0.5):
+def detect_r_peaks(signal: np.ndarray, ms_per_pixel: float, prominence_factor: float = 0.5) -> np.ndarray:
     """Detect R-peaks using prominence and minimum distance heuristics."""
     return _analyzer().detect_r_peaks(signal, ms_per_pixel, prominence_factor)
 
@@ -1333,10 +1324,13 @@ def main():
         require_roles(["Administrator", "Clinician", "Researcher"])
         st.subheader("Analyze ECG Image")
         uploaded = st.file_uploader("Upload ECG image (PNG/JPG/PDF)", type=["png", "jpg", "jpeg", "pdf"])
+        camera_photo = st.camera_input("Take a picture of ECG (PNG/JPG)")
+        
+        selected_upload = uploaded or camera_photo
 
-        if uploaded:
+        if selected_upload:
             # Load uploaded file and reset cached analysis on file change.
-            image, image_bytes, ext = load_image_from_upload(uploaded)
+            image, image_bytes, ext = load_image_from_upload(selected_upload)
             if image is None:
                 st.error("Unable to read the uploaded file.")
                 st.stop()
@@ -1361,7 +1355,7 @@ def main():
             manual_pixels_per_mm = st.slider("Pixels per mm", min_value=5.0, max_value=40.0, value=20.0, step=0.5)
             pixels_per_mm = grid_spacing if grid_spacing else manual_pixels_per_mm
 
-            prominence_factor = st.slider("R-peak sensitivity", min_value=0.1, max_value=1.5, value=0.5, step=0.1)
+            prominence_factor = st.slider("R-peak sensitivity", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
 
             if st.button("Run Analysis"):
                 # Run the full pipeline and display plots/metrics.
@@ -1446,9 +1440,15 @@ def main():
                 type=["png", "jpg", "jpeg", "pdf"],
                 key=f"upload_{label}",
             )
-            if upload:
+            camera_photo = st.camera_input(
+                f"Take a picture of ECG {label}",
+                key=f"camera_{label}",
+            )
+            selected_upload = upload or camera_photo
+            
+            if selected_upload:
                 # Run analysis from the uploaded file on-demand.
-                image, _, _ = load_image_from_upload(upload)
+                image, _, _ = load_image_from_upload(selected_upload)
                 if image is None:
                     st.error("Unable to read the uploaded file.")
                     return None
@@ -1466,7 +1466,7 @@ def main():
                 prominence_factor = st.slider(
                     f"R-peak sensitivity ({label})",
                     min_value=0.1,
-                    max_value=1.5,
+                    max_value=1.0,
                     value=0.5,
                     step=0.1,
                     key=f"prom_{label}",
@@ -1806,7 +1806,7 @@ def main():
                 table_names = data_export._get_table_names(conn)
                 for table in table_names:
                     try:
-                        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+                        df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
                     except Exception:
                         st.warning(f"Unable to read table: {table}")
                         continue

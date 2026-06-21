@@ -1,41 +1,87 @@
 # ECG Graph Extraction and Analysis System
 
-GUI app for ECG image preprocessing, digitization, feature extraction, comparison, and storage based on SRS.pdf.
+A comprehensive system for ECG image preprocessing, digitization, feature extraction, comparison, and storage. Originally built as a Streamlit GUI application, it now also features a FastAPI backend and a React Native mobile application for mobile-friendly access to the core analysis pipeline.
+
+## System Architecture
+
+The project is structured into three main components:
+
+1. **Core Application & Web UI (`ECGComparisonPython.py`)**
+   - Implements the core domain logic: `ECGDatabase`, `ECGAnalyzer`, `ECGAligner`, and `ECGExporter`.
+   - Provides a Streamlit-based web interface for clinicians and researchers.
+   - Features include image upload (PNG/JPG/PDF), preprocessing, gridline-based calibration, waveform digitization, R-peak detection, and feature extraction (P, Q, R, S, T).
+   - Allows side-by-side comparison of two ECG signals with delta visualization.
+   - Supports exporting analysis and comparison outputs to CSV and JSON formats.
+
+2. **Mobile Backend (`mobile_backend/main.py`)**
+   - A lightweight FastAPI server that exposes the core Python analysis and persistence functions via a RESTful API.
+   - Designed to be consumed by the companion mobile application.
+   - Features token-based prototype authentication (HMAC-signed payload) for secure access.
+   - Returns base64-encoded matplotlib figures for image plotting to avoid relying on a file server.
+
+3. **Mobile Application (`mobile_app/`)**
+   - A React Native (Expo) companion app.
+   - Provides screens for Login, ECG Analysis, viewing Records, Comparing ECGs, and Admin Analysis.
+   - Communicates with the FastAPI backend to leverage the core Python logic without duplication.
 
 ## Features
-- Upload ECG images (PNG/JPG/PDF)
-- Preprocessing (denoise, contrast enhancement)
-- Gridline-based calibration (pixels per mm)
-- Waveform digitization
-- Feature extraction (P, Q, R, S, T) and metrics
-- ECG comparison with alignment and delta visualization
-- SQLite storage for analyses and images
-- Export to CSV and JSON
+
+- **ECG Processing Pipeline**: Denoise, contrast enhancement, grid detection (px/mm), waveform digitization, and signal conversion (mV).
+- **Clinical Metrics**: Automatic computation of Heart Rate (bpm), RR intervals, PR interval, QRS duration, and QT interval.
+- **Comparison Engine**: Align two ECG signals using R-peak alignment or cross-correlation, compute delta waveforms, and comparison metrics.
+- **Data Persistence**: Uses a local SQLite database (`data/ecg.db`) to store user records, analysis JSON blobs, audit logs, and settings. Original images are deduplicated via SHA-256 hashes and stored locally.
+- **User Management & RBAC**: Role-Based Access Control with local token auth, auditing, and configurable privacy restrictions for patient data.
 
 ## Requirements
-- Windows/Linux
+
+### Python Core & Web App
+- Windows / Linux
 - Python 3.10+
+- See `requirements.txt` for Python dependencies (e.g., Streamlit, OpenCV, NumPy, SciPy, Matplotlib, Pandas).
 
-## Setup
-1. Create/activate a virtual environment.
+### Mobile App
+- Node.js & npm/yarn
+- Expo CLI
+
+## Setup & Running
+
+### 1. Web Application (Streamlit)
+1. Create and activate a Python virtual environment.
 2. Install dependencies:
-   - pip install -r requirements.txt
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Run the Streamlit app:
+   ```bash
+   python -m streamlit run ECGComparisonPython.py
+   ```
+   *(Alternatively, use the provided `start_server.bat` / `StartServer.bat` on Windows)*
 
-## Run
-- Windows (PowerShell):
-  - C:/Projects/ECGComparisonPython/.venv/Scripts/python.exe -m streamlit run ECGComparisonPython.py
+### 2. Mobile Backend (FastAPI)
+1. Ensure the Python virtual environment is activated and dependencies are installed.
+2. Run the FastAPI server:
+   ```bash
+   python mobile_backend/main.py
+   ```
+   *The server runs on port 8000 by default.*
 
-## Usage
-1. Open the app in your browser.
-2. Analyze an ECG in the “Analyze” tab.
-3. Save to database with metadata.
-4. Compare two ECGs in the “Compare” tab.
-5. Download CSV/JSON outputs.
+### 3. Mobile App (React Native)
+1. Navigate to the `mobile_app` directory:
+   ```bash
+   cd mobile_app
+   ```
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Start the Expo development server:
+   ```bash
+   npx expo start
+   ```
 
 ## Data Storage
-- Database: data/ecg.db
-- Images: data/images/
+- **Database**: `data/ecg.db`
+- **Images**: `data/images/`
 
-## Notes
-- Automatic grid detection may fail on low-quality scans. Use manual pixels-per-mm when needed.
-- This is an MVP and not a clinical-grade diagnostic tool.
+## Disclaimer
+Automatic grid detection accuracy heavily depends on image quality and grid visibility. This system is intended as an MVP tool for research and workflow simplification; it is **not** a clinical-grade diagnostic tool.

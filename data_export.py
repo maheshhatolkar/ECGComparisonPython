@@ -49,7 +49,7 @@ def export_all_tables_to_csv(paths: Optional[StoragePaths] = None, output_dir: O
         # single issue does not prevent a full export.
         for table in table_names:
             try:
-                df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+                df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
             except Exception:
                 # If reading a table fails, skip it but continue exporting others
                 continue
@@ -115,7 +115,7 @@ def export_all_tables_to_excel(paths: Optional[StoragePaths] = None, excel_path:
     with pd.ExcelWriter(excel_path, engine=engine) as writer:
             for table in table_names:
                 try:
-                    df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+                    df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
                 except Exception:
                     # skip unreadable tables
                     continue
