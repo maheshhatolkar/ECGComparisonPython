@@ -1,3 +1,4 @@
+import { API_URL } from "../config";
 import React, { useState } from 'react';
 import { View, Text, Button, Image, TextInput } from 'react-native';
 
@@ -9,7 +10,7 @@ export default function CompareScreen() {
     const form = new FormData();
     form.append('record_a', a);
     form.append('record_b', b);
-    const resp = await fetch('http://10.0.2.2:8000/compare/plot', { method: 'POST', body: form });
+    const resp = await fetch(`${API_URL}/compare/plot`, { method: 'POST', body: form });
     const json = await resp.json();
     setImg('data:image/png;base64,' + json.image_base64);
   };

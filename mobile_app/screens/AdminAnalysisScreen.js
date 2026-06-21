@@ -1,3 +1,4 @@
+import { API_URL } from "../config";
 import React, { useEffect, useState } from 'react';
 import { View, Text, Button, FlatList, Image, TouchableOpacity } from 'react-native';
 
@@ -5,12 +6,12 @@ export default function AdminAnalysisScreen({ route }) {
   const [tables, setTables] = useState([]);
   const [rows, setRows] = useState([]);
   const fetchTables = async () => {
-    const resp = await fetch('http://10.0.2.2:8000/tables', { headers: { Authorization: `Bearer ${route.params?.token}` } });
+    const resp = await fetch(`${API_URL}/tables`, { headers: { Authorization: `Bearer ${route.params?.token}` } });
     const json = await resp.json();
     setTables(json.tables || []);
   };
   const fetchTable = async (t) => {
-    const resp = await fetch(`http://10.0.2.2:8000/table/${t}`, { headers: { Authorization: `Bearer ${route.params?.token}` } });
+    const resp = await fetch(`${API_URL}/table/${t}`, { headers: { Authorization: `Bearer ${route.params?.token}` } });
     const json = await resp.json();
     setRows(json.rows || []);
   };

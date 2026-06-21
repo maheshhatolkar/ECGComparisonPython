@@ -13,9 +13,10 @@ import pandas as pd
 
 try:
     # Prefer to reuse the project's StoragePaths for default locations
-    from ECGComparisonPython import StoragePaths
+    from db import StoragePaths
 except Exception:  # pragma: no cover - defensive
     StoragePaths = None
+
 
 
 def _get_table_names(conn: sqlite3.Connection) -> List[str]:

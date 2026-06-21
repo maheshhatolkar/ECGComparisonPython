@@ -1,3 +1,4 @@
+import { API_URL } from "../config";
 import React, { useState } from 'react';
 import { View, Text, Button, Image, ActivityIndicator, ScrollView } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -29,7 +30,7 @@ export default function AnalyzeScreen({ route }) {
       // include token in header if available
       const headers = {};
       if (route.params?.token) headers['Authorization'] = `Bearer ${route.params.token}`;
-      const resp = await fetch('http://10.0.2.2:8000/analyze', { method: 'POST', body: form, headers });
+      const resp = await fetch(`${API_URL}/analyze`, { method: 'POST', body: form, headers });
       const json = await resp.json();
       setResult(json);
     } catch (e) {
@@ -53,7 +54,7 @@ export default function AnalyzeScreen({ route }) {
             <Button title="View waveform" onPress={async () => {
               const form = new FormData();
               form.append('analysis', JSON.stringify(result));
-              const resp = await fetch('http://10.0.2.2:8000/analysis/plot', { method: 'POST', body: form });
+              const resp = await fetch(`${API_URL}/analysis/plot`, { method: 'POST', body: form });
               const j = await resp.json();
               navigation.navigate('Compare', { plot: 'data:image/png;base64,' + j.image_base64 });
             }} />

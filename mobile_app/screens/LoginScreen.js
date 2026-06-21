@@ -1,3 +1,4 @@
+import { API_URL } from "../config";
 import React, { useState } from 'react';
 import { View, TextInput, Button, Text } from 'react-native';
 
@@ -11,7 +12,7 @@ export default function LoginScreen({ navigation }) {
       const form = new FormData();
       form.append('username', username);
       form.append('password', password);
-      const resp = await fetch('http://10.0.2.2:8000/login', { method: 'POST', body: form });
+      const resp = await fetch(`${API_URL}/login`, { method: 'POST', body: form });
       if (!resp.ok) {
         setError('Login failed');
         return;

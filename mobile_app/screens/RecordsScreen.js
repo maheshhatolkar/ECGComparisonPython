@@ -1,3 +1,4 @@
+import { API_URL } from "../config";
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Button } from 'react-native';
 
@@ -5,7 +6,7 @@ export default function RecordsScreen({ navigation }) {
   const [records, setRecords] = useState([]);
   useEffect(() => { fetchRecords(); }, []);
   const fetchRecords = async () => {
-    const resp = await fetch('http://10.0.2.2:8000/records');
+    const resp = await fetch(`${API_URL}/records`);
     const data = await resp.json();
     setRecords(data);
   };
