@@ -309,6 +309,12 @@ async def export_data():
 
 @app.post("/analysis/plot")
 async def analysis_plot(analysis: dict):
+    """Generate a base64 encoded PNG plot of a single ECG analysis.
+
+    Accepts an analysis dictionary (containing signal_mV, time_ms, and features)
+    and uses matplotlib to render a visualization. Returns a JSON object with
+    the base64 encoded image string.
+    """
     from plotting import render_signal_plot
     import matplotlib.pyplot as plt
     try:
@@ -327,6 +333,12 @@ async def analysis_plot(analysis: dict):
 
 @app.post("/compare/plot")
 async def compare_plot(aligned: dict):
+    """Generate a base64 encoded PNG plot comparing two aligned ECG signals.
+
+    Accepts a dictionary containing aligned_a and aligned_b signal arrays
+    and uses matplotlib to render an overlay visualization. Returns a JSON
+    object with the base64 encoded image string.
+    """
     from plotting import render_comparison_plot
     import matplotlib.pyplot as plt
     try:
@@ -345,6 +357,11 @@ async def compare_plot(aligned: dict):
 
 @app.get("/tables")
 async def get_tables():
+    """Retrieve a list of all table names in the local SQLite database.
+
+    Useful for administrative interfaces that need to dynamically discover
+    available tables for data export or inspection.
+    """
     import sqlite3
     paths = StoragePaths.current()
     with sqlite3.connect(paths.db_path) as conn:
@@ -353,6 +370,11 @@ async def get_tables():
 
 @app.get("/table/{t}")
 async def get_table_data(t: str):
+    """Retrieve all rows from a specific database table.
+
+    Reads the table into a pandas DataFrame and returns it as a JSON list
+    of record dictionaries, replacing NaNs with nulls for JSON compatibility.
+    """
     import sqlite3
     import pandas as pd
     paths = StoragePaths.current()
