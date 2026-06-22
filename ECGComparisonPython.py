@@ -45,11 +45,15 @@ def load_image_from_upload(uploaded_file):
         ext = os.path.splitext(filename)[1] or ".png"
     return image, data, ext
 
+@st.cache_resource
+def _initialize_db():
+    init_db()
+
 def main():
     """Streamlit GUI entry point."""
     # Initialize UI and persistent storage.
     st.set_page_config(page_title="ECG Graph Extraction", layout="wide")
-    init_db()
+    _initialize_db()
     enforce_session_timeout()
 
     st.title("ECG Graph Extraction and Analysis")
@@ -437,6 +441,31 @@ def main():
                 st.dataframe(records, use_container_width=True)
                 if is_user_management_enabled() and not user_has_role(["Administrator"]):
                     st.info("Only Administrators can delete records.")
+
+            st.divider()
+            st.subheader("View Record Details")
+            record_map = {
+                f"{int(row.id)} - {row.patient_id or ''} - {row.ecg_datetime or ''}": int(row.id)
+                for row in records.itertuples(index=False)
+            }
+            if record_map:
+                selected_label = st.selectbox("Select record to view", list(record_map.keys()), key="view_record_select")
+                if st.button("View Record"):
+                    record = load_record(record_map[selected_label])
+                    analysis = record.get("analysis")
+                    if analysis:
+                        signal = np.array(analysis["signal_mV"])
+                        time_ms = np.array(analysis["time_ms"])
+                        
+                        st.write("**Graphical Format (Waveform)**")
+                        fig = render_signal_plot(signal, time_ms, analysis["features"])
+                        st.pyplot(fig)
+                        plt.close(fig)
+                        
+                        st.write("**Tabular Format (Metrics)**")
+                        st.dataframe(metrics_table(analysis["metrics"]), use_container_width=True)
+                    else:
+                        st.warning("No analysis data found for this record.")
 
     if tab_admin_obj:
         with tab_admin_obj:

@@ -53,6 +53,43 @@ def test_api():
     print("Alignment method used:", compare_res.get("alignment_method"))
     print("Delta metrics:", compare_res.get("delta_metrics"))
     
+    print("\nTesting /analysis/plot...")
+    resp = requests.post(f"{BASE_URL}/analysis/plot", json=analysis)
+    if resp.status_code != 200:
+        print("Error /analysis/plot:", resp.status_code, resp.text)
+    else:
+        plot_res = resp.json()
+        print("Analysis plot base64 length:", len(plot_res.get("plot_base64", "")))
+
+    print("\nTesting /compare/plot...")
+    resp = requests.post(f"{BASE_URL}/compare/plot", json={
+        "aligned_a": compare_res.get("aligned_a", []),
+        "aligned_b": compare_res.get("aligned_b", [])
+    })
+    if resp.status_code != 200:
+        print("Error /compare/plot:", resp.status_code, resp.text)
+    else:
+        plot_res = resp.json()
+        print("Compare plot base64 length:", len(plot_res.get("plot_base64", "")))
+
+    print("\nTesting /tables...")
+    resp = requests.get(f"{BASE_URL}/tables")
+    if resp.status_code != 200:
+        print("Error /tables:", resp.status_code, resp.text)
+        return
+    tables = resp.json()
+    print("Tables found:", tables)
+
+    if tables:
+        t = tables[0]
+        print(f"\nTesting /table/{t}...")
+        resp = requests.get(f"{BASE_URL}/table/{t}")
+        if resp.status_code != 200:
+            print(f"Error /table/{t}:", resp.status_code, resp.text)
+        else:
+            table_data = resp.json()
+            print(f"Rows in {t}:", len(table_data))
+    
     print("\nAll detailed API workflow tests completed successfully!")
 
 if __name__ == "__main__":

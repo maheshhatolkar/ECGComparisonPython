@@ -120,6 +120,8 @@ class ECGAnalyzer:
         array of floats in millivolts.
         """
         # Convert from image coordinates to baseline-centered amplitudes.
+        if len(y_pixels) == 0:
+            return np.array([])
         baseline = np.median(y_pixels)
         return (baseline - y_pixels) * mV_per_pixel
 

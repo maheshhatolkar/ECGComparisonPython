@@ -10,11 +10,15 @@ def hash_password(password: str, salt: str) -> str:
     # Salted hash for password storage.
     return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
 
-\n\ndef verify_password(password: str, salt: str, password_hash: str) -> bool:
+
+
+def verify_password(password: str, salt: str, password_hash: str) -> bool:
     # Check a plaintext password against the stored hash.
     return hash_password(password, salt) == password_hash
 
-\n\ndef get_user_by_username(username: str) -> dict | None:
+
+
+def get_user_by_username(username: str) -> dict | None:
     # Retrieve user credentials and profile by username.
     with sqlite3.connect(StoragePaths.current().db_path) as conn:
         row = conn.execute(
@@ -33,7 +37,9 @@ def hash_password(password: str, salt: str) -> str:
         "enabled": bool(row[6]),
     }
 
-\n\ndef list_users() -> pd.DataFrame:
+
+
+def list_users() -> pd.DataFrame:
     # List user accounts for the admin view.
     with sqlite3.connect(StoragePaths.current().db_path) as conn:
         return pd.read_sql_query(
@@ -41,7 +47,9 @@ def hash_password(password: str, salt: str) -> str:
             conn,
         )
 
-\n\ndef create_user(username: str, display_name: str, role: str, password: str, enabled: bool = True) -> None:
+
+
+def create_user(username: str, display_name: str, role: str, password: str, enabled: bool = True) -> None:
     # Create a new user with salted password hash.
     salt = secrets.token_hex(16)
     password_hash = hash_password(password, salt)
@@ -55,7 +63,9 @@ def hash_password(password: str, salt: str) -> str:
             (username, display_name, role, password_hash, salt, 1 if enabled else 0, now, now),
         )
 
-\n\ndef update_user(user_id: int, display_name: str, role: str, enabled: bool) -> None:
+
+
+def update_user(user_id: int, display_name: str, role: str, enabled: bool) -> None:
     # Update profile metadata and enabled state.
     now = datetime.now(timezone.utc).isoformat()
     with sqlite3.connect(StoragePaths.current().db_path) as conn:
@@ -66,7 +76,9 @@ def hash_password(password: str, salt: str) -> str:
             (display_name, role, 1 if enabled else 0, now, user_id),
         )
 
-\n\ndef reset_password(user_id: int, new_password: str) -> None:
+
+
+def reset_password(user_id: int, new_password: str) -> None:
     # Reset a user password with a new salt.
     salt = secrets.token_hex(16)
     password_hash = hash_password(new_password, salt)
@@ -79,7 +91,9 @@ def hash_password(password: str, salt: str) -> str:
             (password_hash, salt, now, user_id),
         )
 
-\n\ndef log_audit(event_type: str, outcome: str, user: dict | None = None, details: str | None = None) -> None:
+
+
+def log_audit(event_type: str, outcome: str, user: dict | None = None, details: str | None = None) -> None:
     # Insert a row into audit_logs for security and traceability.
     with sqlite3.connect(StoragePaths.current().db_path) as conn:
         conn.execute(
@@ -97,7 +111,9 @@ def hash_password(password: str, salt: str) -> str:
             ),
         )
 
-\n\ndef list_audit_logs(limit: int = 200) -> pd.DataFrame:
+
+
+def list_audit_logs(limit: int = 200) -> pd.DataFrame:
     # Return the latest audit rows for the admin view.
     with sqlite3.connect(StoragePaths.current().db_path) as conn:
         return pd.read_sql_query(
@@ -106,7 +122,9 @@ def hash_password(password: str, salt: str) -> str:
             params=(limit,),
         )
 
-\n\ndef authenticate_user(username: str, password: str) -> dict | None:
+
+
+def authenticate_user(username: str, password: str) -> dict | None:
     # Validate username/password against stored credentials.
     user = get_user_by_username(username)
     if not user or not user.get("enabled"):
@@ -115,11 +133,15 @@ def hash_password(password: str, salt: str) -> str:
         return user
     return None
 
-\n\ndef is_user_management_enabled() -> bool:
+
+
+def is_user_management_enabled() -> bool:
     # Feature flag for access control and auditing.
     return get_setting("user_management_enabled", "false") == "true"
 
-\n\ndef get_session_timeout_minutes() -> int:
+
+
+def get_session_timeout_minutes() -> int:
     # Defensive parsing of the session timeout setting.
     value = get_setting("session_timeout_minutes", "30")
     try:
@@ -127,12 +149,16 @@ def hash_password(password: str, salt: str) -> str:
     except ValueError:
         return 30
 
-\n\ndef user_has_role(roles: list[str]) -> bool:
+
+
+def user_has_role(roles: list[str]) -> bool:
     # Helper for checking the current session's role.
     role = st.session_state.get("role")
     return role in roles
 
-\n\ndef require_roles(roles: list[str]):
+
+
+def require_roles(roles: list[str]):
     # Gate UI sections based on authentication and role.
     if not is_user_management_enabled():
         return
@@ -143,7 +169,9 @@ def hash_password(password: str, salt: str) -> str:
         st.error("You do not have permission to access this area.")
         st.stop()
 
-\n\ndef enforce_session_timeout():
+
+
+def enforce_session_timeout():
     # Clear authentication when idle time exceeds configured threshold.
     if not is_user_management_enabled():
         return
@@ -169,4 +197,5 @@ def hash_password(password: str, salt: str) -> str:
         st.stop()
     st.session_state["last_activity"] = datetime.now(timezone.utc).isoformat()
 
-\n\n
+
+

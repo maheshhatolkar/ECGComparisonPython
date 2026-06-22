@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
 def render_signal_plot(signal: np.ndarray, time_ms: np.ndarray, features: dict | None = None):
     """Plot ECG waveform with optional feature markers."""
     import matplotlib.pyplot as plt
@@ -26,7 +26,9 @@ def render_signal_plot(signal: np.ndarray, time_ms: np.ndarray, features: dict |
     ax.grid(True, alpha=0.3)
     return fig
 
-\n\ndef render_comparison_plot(signal_a, signal_b):
+
+
+def render_comparison_plot(signal_a, signal_b):
     """Plot two aligned ECG signals for visual comparison."""
     import matplotlib.pyplot as plt
 
@@ -40,7 +42,9 @@ def render_signal_plot(signal: np.ndarray, time_ms: np.ndarray, features: dict |
     ax.grid(True, alpha=0.3)
     return fig
 
-\n\ndef render_delta_plot(delta):
+
+
+def render_delta_plot(delta):
     """Plot the delta waveform (ECG-B − ECG-A)."""
     import matplotlib.pyplot as plt
 
@@ -54,4 +58,5 @@ def render_signal_plot(signal: np.ndarray, time_ms: np.ndarray, features: dict |
     ax.grid(True, alpha=0.3)
     return fig
 
-\n\n
+
+

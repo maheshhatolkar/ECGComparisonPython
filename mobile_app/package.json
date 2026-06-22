@@ -9,10 +9,10 @@
     "ios": "expo run:ios"
   },
   "dependencies": {
-    "expo": "~48.0.0",
-    "expo-image-picker": "~14.1.1",
-    "react": "18.2.0",
-    "react-native": "0.71.8"
+    "expo": "^56.0.12",
+    "expo-image-picker": "~56.0.18",
+    "react": "19.2.3",
+    "react-native": "0.85.3"
   },
   "devDependencies": {
     "eslint": "^10.5.0"
