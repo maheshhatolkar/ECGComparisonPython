@@ -1,18 +1,38 @@
 import { API_URL } from "../config";
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Button, Image, TextInput } from 'react-native';
 
-export default function CompareScreen() {
+export default function CompareScreen({ route }) {
   const [a, setA] = useState('');
   const [b, setB] = useState('');
-  const [img, setImg] = useState(null);
+  const [img, setImg] = useState(route?.params?.plot || null);
+
+  useEffect(() => {
+    if (route?.params?.plot) {
+      setImg(route.params.plot);
+    }
+  }, [route?.params?.plot]);
   const doCompare = async () => {
-    const form = new FormData();
-    form.append('record_a', a);
-    form.append('record_b', b);
-    const resp = await fetch(`${API_URL}/compare/plot`, { method: 'POST', body: form });
-    const json = await resp.json();
-    setImg('data:image/png;base64,' + json.image_base64);
+    try {
+      const form = new FormData();
+      form.append('record_a', a);
+      form.append('record_b', b);
+      const resp = await fetch(`${API_URL}/compare`, { method: 'POST', body: form });
+      const compareResult = await resp.json();
+
+      const plotResp = await fetch(`${API_URL}/compare/plot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aligned_a: compareResult.aligned_a,
+          aligned_b: compareResult.aligned_b
+        })
+      });
+      const json = await plotResp.json();
+      setImg('data:image/png;base64,' + json.plot_base64);
+    } catch (e) {
+      console.error("Comparison failed:", e);
+    }
   };
   return (
     <View style={{ padding: 16 }}>

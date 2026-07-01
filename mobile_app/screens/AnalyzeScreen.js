@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { View, Text, Button, Image, ActivityIndicator, ScrollView } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
-export default function AnalyzeScreen({ route }) {
+export default function AnalyzeScreen({ route, navigation }) {
   const { user } = route.params || {};
   const [imageUri, setImageUri] = useState(null);
   const [result, setResult] = useState(null);
@@ -11,8 +11,8 @@ export default function AnalyzeScreen({ route }) {
 
   const pickImage = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({ base64: false, quality: 0.8 });
-    if (!res.cancelled) {
-      setImageUri(res.uri);
+    if (!res.canceled && res.assets && res.assets.length > 0) {
+      setImageUri(res.assets[0].uri);
     }
   };
 
@@ -52,11 +52,13 @@ export default function AnalyzeScreen({ route }) {
           <Text>{JSON.stringify(result).slice(0, 1000)}</Text>
           {result.time_ms && (
             <Button title="View waveform" onPress={async () => {
-              const form = new FormData();
-              form.append('analysis', JSON.stringify(result));
-              const resp = await fetch(`${API_URL}/analysis/plot`, { method: 'POST', body: form });
+              const resp = await fetch(`${API_URL}/analysis/plot`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(result)
+              });
               const j = await resp.json();
-              navigation.navigate('Compare', { plot: 'data:image/png;base64,' + j.image_base64 });
+              navigation.navigate('Compare', { plot: 'data:image/png;base64,' + j.plot_base64 });
             }} />
           )}
         </View>

@@ -20,9 +20,10 @@ The project is structured into three main components:
    - Returns base64-encoded matplotlib figures for image plotting to avoid relying on a file server.
 
 3. **Mobile Application (`mobile_app/`)**
-   - A React Native (Expo) companion app.
+   - A React Native (Expo) companion app with a native Android build.
    - Provides screens for Login, ECG Analysis, viewing Records, Comparing ECGs, and Admin Analysis.
    - Communicates with the FastAPI backend to leverage the core Python logic without duplication.
+   - Builds a standalone Android APK via Gradle (`mobile_app/android/`).
 
 ## Features
 
@@ -42,6 +43,12 @@ The project is structured into three main components:
 ### Mobile App
 - Node.js & npm/yarn
 - Expo CLI
+
+### Android Build
+- JDK 17+ (OpenJDK 21 recommended; ships with Android Studio)
+- Android SDK (API level 36 / build-tools 36.0.0)
+- Android NDK 27.1.12297006 (installed automatically by the build)
+- `JAVA_HOME` and `ANDROID_HOME` environment variables, or `local.properties` in `mobile_app/android/` with `sdk.dir` set
 
 ## Setup & Running
 
@@ -78,6 +85,34 @@ The project is structured into three main components:
    ```bash
    npx expo start
    ```
+
+### 4. Android APK Build
+1. Ensure `JAVA_HOME` points to a JDK 17+ installation and `ANDROID_HOME` (or `sdk.dir` in `mobile_app/android/local.properties`) points to the Android SDK:
+   ```properties
+   # mobile_app/android/local.properties
+   sdk.dir=C:/Users/<YOUR_USER>/AppData/Local/Android/Sdk
+   ```
+2. Install JS dependencies (if not already done):
+   ```bash
+   cd mobile_app
+   npm install
+   ```
+3. Build the debug APK:
+   ```bash
+   cd android
+   gradlew.bat assembleDebug        # Windows
+   ./gradlew assembleDebug           # Linux / macOS
+   ```
+4. The output APK will be at:
+   ```
+   mobile_app/android/app/build/outputs/apk/debug/app-debug.apk
+   ```
+5. Install on a connected device or emulator:
+   ```bash
+   adb install app/build/outputs/apk/debug/app-debug.apk
+   ```
+
+> **Note:** The mobile app connects to the FastAPI backend at `http://10.0.2.2:8000` (the Android emulator's alias for the host's localhost). This is configured in `mobile_app/config.js`. Make sure the mobile backend is running before launching the app.
 
 ## Data Storage
 - **Database**: `data/ecg.db`

@@ -8,12 +8,12 @@ export default function AdminAnalysisScreen({ route }) {
   const fetchTables = async () => {
     const resp = await fetch(`${API_URL}/tables`, { headers: { Authorization: `Bearer ${route.params?.token}` } });
     const json = await resp.json();
-    setTables(json.tables || []);
+    setTables(json || []);
   };
   const fetchTable = async (t) => {
     const resp = await fetch(`${API_URL}/table/${t}`, { headers: { Authorization: `Bearer ${route.params?.token}` } });
     const json = await resp.json();
-    setRows(json.rows || []);
+    setRows(json || []);
   };
   useEffect(() => { fetchTables(); }, []);
   return (
