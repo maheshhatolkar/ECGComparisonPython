@@ -130,10 +130,8 @@ def test_analysis_export_formats():
             "qt_interval_ms": 380.0,
         }
     }
-    csv_data, json_data = analyzer.analysis_to_exports(analysis)
+    csv_data = analyzer.analysis_to_exports(analysis)
     assert "Heart Rate" in csv_data
-    parsed = json.loads(json_data)
-    assert parsed["metrics"]["heart_rate_bpm"] == 70.0
 
 
 # ============================================================================
@@ -190,9 +188,102 @@ def test_compute_hash_empty_data():
     hash_val = db.compute_hash(b"")
     assert isinstance(hash_val, str)
     assert len(hash_val) == 64  # SHA-256 produces 64 hex characters
-
-
 # ============================================================================
 # Import pandas for test assertions
 # ============================================================================
 import pandas as pd
+
+
+def test_data_export_formatting(tmp_path):
+    import io
+    import sqlite3
+    import data_export
+    from db import StoragePaths, ECGDatabase
+
+    # 1. Setup temporary database paths
+    temp_data_dir = tmp_path / "data"
+    temp_image_dir = temp_data_dir / "images"
+    temp_db_path = temp_data_dir / "ecg.db"
+
+    paths = StoragePaths(
+        base_dir=str(tmp_path),
+        data_dir=str(temp_data_dir),
+        image_dir=str(temp_image_dir),
+        db_path=str(temp_db_path)
+    )
+
+    # Initialize the database schema
+    database = ECGDatabase(paths)
+    database.init_db()
+
+    # 2. Insert a record with analysis_json
+    metadata = {
+        "patient_id": "P-EXPORT-TEST",
+        "ecg_datetime": "2026-07-14 10:00",
+        "root_cause": "test",
+        "root_cause_time": "09:45"
+    }
+
+    image = Image.new("RGB", (10, 10), color="white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    image_bytes = buffer.getvalue()
+
+    analysis = {
+        "ms_per_pixel": 2.0,
+        "mV_per_pixel": 0.05,
+        "pixels_per_mm": 20.0,
+        "signal_mV": [0.1, 0.2, 0.3],
+        "time_ms": [0.0, 2.0, 4.0],
+        "features": {
+            "r_peaks": [1, 2]
+        },
+        "metrics": {
+            "heart_rate_bpm": 75.0,
+            "pr_interval_ms": 150.0
+        }
+    }
+
+    database.save_record(metadata, image_bytes, ".png", analysis)
+
+    # 3. Read table data using get_table_data and verify
+    with sqlite3.connect(paths.db_path) as conn:
+        df = data_export.get_table_data(conn, "ecg_records")
+
+    # Verify exclusions
+    assert "image_hash" not in df.columns
+    assert "image_filename" not in df.columns
+    assert "analysis_json" not in df.columns
+
+    # Verify expansions
+    assert "ms_per_pixel" in df.columns
+    assert "mV_per_pixel" in df.columns
+    assert "pixels_per_mm" in df.columns
+    assert "signal_mV" in df.columns
+    assert "time_ms" in df.columns
+    assert "features" in df.columns
+    assert "metrics" in df.columns
+
+    # Verify nested metrics
+    assert "metrics_heart_rate_bpm" in df.columns
+    assert "heart_rate_bpm" in df.columns
+    assert df.loc[0, "heart_rate_bpm"] == 75.0
+
+    # Verify nested features
+    assert "features_r_peaks" in df.columns
+    assert "r_peaks" in df.columns
+
+    # 4. Verify full export runs successfully
+    csv_files = data_export.export_all_tables_to_csv(paths=paths)
+    assert len(csv_files) > 0
+
+    # Check that ecg_records.csv exists and has correct headers
+    record_csv_path = [f for f in csv_files if "ecg_records.csv" in f][0]
+    csv_df = pd.read_csv(record_csv_path)
+    assert "image_hash" not in csv_df.columns
+    assert "heart_rate_bpm" in csv_df.columns
+
+    # Verify excel export
+    excel_file = data_export.export_all_tables_to_excel(paths=paths)
+    assert excel_file.endswith(".xlsx") or excel_file.endswith(".zip")
+

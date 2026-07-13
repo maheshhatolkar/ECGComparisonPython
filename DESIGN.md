@@ -89,10 +89,10 @@ classDiagram
       +align_signals(signal_a, signal_b, r_a, r_b) tuple
    }
 
-   class ECGExporter {
-      +metrics_table(metrics) pd.DataFrame
-      +analysis_to_exports(analysis) tuple~str,str~
-   }
+    class ECGExporter {
+       +metrics_table(metrics) pd.DataFrame
+       +analysis_to_exports(analysis) str
+    }
 
    class PublicAPI~module-level functions~ {
       +init_db()

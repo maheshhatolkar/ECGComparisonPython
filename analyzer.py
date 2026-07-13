@@ -316,17 +316,16 @@ class ECGExporter:
             rows.append({"Metric": label, "Value": metrics.get(key)})
         return pd.DataFrame(rows)
 
-    def analysis_to_exports(self, analysis: dict) -> tuple[str, str]:
-        """Create CSV and pretty-printed JSON representations of analysis.
+    def analysis_to_exports(self, analysis: dict) -> str:
+        """Create CSV representation of analysis.
 
-        Returns a tuple (csv_string, json_string) which callers can send as
+        Returns a CSV string which callers can send as
         file downloads or attach to exported reports.
         """
-        # Build CSV and JSON payloads for downloads.
+        # Build CSV payload for downloads.
         csv_df = self.metrics_table(analysis["metrics"])
         csv_data = csv_df.to_csv(index=False)
-        json_data = json.dumps(analysis, indent=2)
-        return csv_data, json_data
+        return csv_data
 
 
 def _db() -> ECGDatabase:
@@ -377,7 +376,7 @@ def metrics_table(metrics: dict) -> pd.DataFrame:
 def align_signals(signal_a: np.ndarray, signal_b: np.ndarray, r_a: list, r_b: list) -> tuple:
     return get_aligner().align_signals(signal_a, signal_b, r_a, r_b)
 
-def analysis_to_exports(analysis: dict) -> tuple[str, str]:
+def analysis_to_exports(analysis: dict) -> str:
     return get_exporter().analysis_to_exports(analysis)
 
 def comparison_metrics(metrics_a: dict, metrics_b: dict) -> dict:

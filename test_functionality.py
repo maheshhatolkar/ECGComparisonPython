@@ -58,7 +58,7 @@ def test_export():
             'qt_interval_ms': 380.0,
         }
         df = app.metrics_table(metrics)
-        csv, json_data = app.analysis_to_exports({'metrics': metrics})
+        csv = app.analysis_to_exports({'metrics': metrics})
         print('✓ Export functionality working')
         return True
     except Exception as e:

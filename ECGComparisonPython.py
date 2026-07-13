@@ -181,7 +181,7 @@ def main():
                 plt.close(fig)
                 st.dataframe(metrics_table(analysis["metrics"]))
 
-                csv_data, json_data = analysis_to_exports(analysis)
+                csv_data = analysis_to_exports(analysis)
 
                 with st.form("save_record"):
                     st.write("Save to database")
@@ -642,7 +642,7 @@ def main():
                 table_names = data_export._get_table_names(conn)
                 for table in table_names:
                     try:
-                        df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
+                        df = data_export.get_table_data(conn, table)
                     except Exception:
                         st.warning(f"Unable to read table: {table}")
                         continue

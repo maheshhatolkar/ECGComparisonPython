@@ -168,6 +168,8 @@ class ECGDatabase:
         row = conn.execute("SELECT COUNT(*) FROM users").fetchone()
         if row and row[0] > 0:
             return
+        import secrets
+        from auth import hash_password
         password = "admin"
         salt = secrets.token_hex(16)
         password_hash = hash_password(password, salt)

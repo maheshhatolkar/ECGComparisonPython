@@ -19,12 +19,61 @@ except Exception:  # pragma: no cover - defensive
 
 
 
+import json
+
+
 def _get_table_names(conn: sqlite3.Connection) -> List[str]:
     # Query the SQLite catalog to enumerate user tables. We explicitly
     # exclude internal sqlite_ tables to avoid attempting to export
     # implementation-specific metadata.
     rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
     return [r[0] for r in rows]
+
+
+def get_table_data(conn: sqlite3.Connection, table_name: str) -> pd.DataFrame:
+    """Read a table from the database and apply export formatting rules.
+
+    - For 'ecg_records', excludes 'image_hash' and 'image_filename', and expands 'analysis_json' fields.
+    """
+    df = pd.read_sql_query(f"SELECT * FROM [{table_name}]", conn)
+    if table_name == "ecg_records":
+        cols_to_drop = [c for c in ["image_hash", "image_filename"] if c in df.columns]
+        if cols_to_drop:
+            df = df.drop(columns=cols_to_drop)
+
+        if "analysis_json" in df.columns:
+            expanded_rows = []
+            for _, row in df.iterrows():
+                expanded = {}
+                analysis_str = row["analysis_json"]
+                if isinstance(analysis_str, str) and analysis_str.strip():
+                    try:
+                        analysis = json.loads(analysis_str)
+                        if isinstance(analysis, dict):
+                            for k, v in analysis.items():
+                                # Unpack top-level field
+                                if isinstance(v, (dict, list)):
+                                    expanded[k] = json.dumps(v)
+                                else:
+                                    expanded[k] = v
+
+                                # If it's a dict, expand it
+                                if isinstance(v, dict):
+                                    for sub_k, sub_v in v.items():
+                                        val_str = json.dumps(sub_v) if isinstance(sub_v, (dict, list)) else sub_v
+                                        expanded[f"{k}_{sub_k}"] = val_str
+                                        expanded[sub_k] = val_str
+                        else:
+                            expanded["analysis_json_value"] = analysis_str
+                    except Exception:
+                        expanded["analysis_json_error"] = "Failed to parse JSON"
+                expanded_rows.append(expanded)
+
+            expanded_df = pd.DataFrame(expanded_rows, index=df.index)
+            df = df.drop(columns=["analysis_json"])
+            df = pd.concat([df, expanded_df], axis=1)
+
+    return df
 
 
 def export_all_tables_to_csv(paths: Optional[StoragePaths] = None, output_dir: Optional[str] = None) -> List[str]:
@@ -50,7 +99,7 @@ def export_all_tables_to_csv(paths: Optional[StoragePaths] = None, output_dir: O
         # single issue does not prevent a full export.
         for table in table_names:
             try:
-                df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
+                df = get_table_data(conn, table)
             except Exception:
                 # If reading a table fails, skip it but continue exporting others
                 continue
@@ -114,9 +163,10 @@ def export_all_tables_to_excel(paths: Optional[StoragePaths] = None, excel_path:
 
     # Use pandas ExcelWriter with the selected engine
     with pd.ExcelWriter(excel_path, engine=engine) as writer:
+        with sqlite3.connect(paths.db_path) as conn:
             for table in table_names:
                 try:
-                    df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
+                    df = get_table_data(conn, table)
                 except Exception:
                     # skip unreadable tables
                     continue

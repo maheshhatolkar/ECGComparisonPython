@@ -161,7 +161,7 @@ def metrics_table(metrics: dict) -> pd.DataFrame:
 def align_signals(signal_a: np.ndarray, signal_b: np.ndarray, r_a: list, r_b: list) -> tuple:
     return get_aligner().align_signals(signal_a, signal_b, r_a, r_b)
 
-def analysis_to_exports(analysis: dict) -> tuple[str, str]:
+def analysis_to_exports(analysis: dict) -> str:
     return get_exporter().analysis_to_exports(analysis)
 
 def comparison_metrics(metrics_a: dict, metrics_b: dict) -> dict:

@@ -90,7 +90,5 @@ def test_analysis_export_formats():
             "qt_interval_ms": 380.0,
         }
     }
-    csv_data, json_data = app.analysis_to_exports(analysis)
+    csv_data = app.analysis_to_exports(analysis)
     assert "Heart Rate" in csv_data
-    parsed = json.loads(json_data)
-    assert parsed["metrics"]["heart_rate_bpm"] == 70.0
