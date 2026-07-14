@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import functools
 
-DB_SCHEMA_VERSION = 2
+DB_SCHEMA_VERSION = 3
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 IMAGE_DIR = os.path.join(DATA_DIR, "images")
@@ -139,6 +139,157 @@ class ECGDatabase:
 
             self.set_db_schema_version(conn, 2)
 
+        # v2 -> v3: expand analysis_json and delta_json into separate columns
+        if current < 3:
+            try:
+                # 1. Migrate ecg_records if needed
+                cursor = conn.execute("PRAGMA table_info(ecg_records)")
+                has_analysis_json = any(row[1] == "analysis_json" for row in cursor.fetchall())
+                if has_analysis_json:
+                    conn.execute("ALTER TABLE ecg_records RENAME TO ecg_records_old")
+                    conn.execute(
+                        """
+                        CREATE TABLE ecg_records (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            patient_id TEXT,
+                            ecg_datetime TEXT,
+                            root_cause TEXT,
+                            root_cause_time TEXT,
+                            image_filename TEXT NOT NULL,
+                            image_hash TEXT NOT NULL,
+                            ms_per_pixel REAL,
+                            mV_per_pixel REAL,
+                            pixels_per_mm REAL,
+                            signal_mV TEXT,
+                            time_ms TEXT,
+                            p_peaks TEXT,
+                            q_peaks TEXT,
+                            r_peaks TEXT,
+                            s_peaks TEXT,
+                            t_peaks TEXT,
+                            heart_rate_bpm REAL,
+                            rr_intervals_ms TEXT,
+                            pr_interval_ms REAL,
+                            qrs_duration_ms REAL,
+                            qt_interval_ms REAL,
+                            created_at TEXT NOT NULL
+                        )
+                        """
+                    )
+
+                    cursor = conn.execute("SELECT id, patient_id, ecg_datetime, root_cause, root_cause_time, image_filename, image_hash, analysis_json, created_at FROM ecg_records_old")
+                    for row in cursor.fetchall():
+                        rec_id, p_id, ecg_dt, rc, rc_time, img_fn, img_hash, anal_json, created = row
+
+                        ms_px, mV_px, px_mm = None, None, None
+                        sig_mV, time_ms = "[]", "[]"
+                        p_pks, q_pks, r_pks, s_pks, t_pks = "[]", "[]", "[]", "[]", "[]"
+                        hr, rr_ms, pr, qrs, qt = None, "[]", None, None, None
+
+                        if anal_json:
+                            try:
+                                anal = json.loads(anal_json)
+                                if isinstance(anal, dict):
+                                    ms_px = anal.get("ms_per_pixel")
+                                    mV_px = anal.get("mV_per_pixel")
+                                    px_mm = anal.get("pixels_per_mm")
+                                    sig_mV = json.dumps(anal.get("signal_mV", []))
+                                    time_ms = json.dumps(anal.get("time_ms", []))
+
+                                    features = anal.get("features", {})
+                                    if isinstance(features, dict):
+                                        p_pks = json.dumps(features.get("p_peaks", []))
+                                        q_pks = json.dumps(features.get("q_peaks", []))
+                                        r_pks = json.dumps(features.get("r_peaks", []))
+                                        s_pks = json.dumps(features.get("s_peaks", []))
+                                        t_pks = json.dumps(features.get("t_peaks", []))
+
+                                    metrics = anal.get("metrics", {})
+                                    if isinstance(metrics, dict):
+                                        hr = metrics.get("heart_rate_bpm")
+                                        rr_ms = json.dumps(metrics.get("rr_intervals_ms", []))
+                                        pr = metrics.get("pr_interval_ms")
+                                        qrs = metrics.get("qrs_duration_ms")
+                                        qt = metrics.get("qt_interval_ms")
+                            except Exception:
+                                pass
+
+                        conn.execute(
+                            """
+                            INSERT INTO ecg_records (
+                                id, patient_id, ecg_datetime, root_cause, root_cause_time,
+                                image_filename, image_hash, ms_per_pixel, mV_per_pixel, pixels_per_mm,
+                                signal_mV, time_ms, p_peaks, q_peaks, r_peaks, s_peaks, t_peaks,
+                                heart_rate_bpm, rr_intervals_ms, pr_interval_ms, qrs_duration_ms, qt_interval_ms,
+                                created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                rec_id, p_id, ecg_dt, rc, rc_time, img_fn, img_hash, ms_px, mV_px, px_mm,
+                                sig_mV, time_ms, p_pks, q_pks, r_pks, s_pks, t_pks,
+                                hr, rr_ms, pr, qrs, qt, created
+                            )
+                        )
+
+                    conn.execute("DROP TABLE ecg_records_old")
+
+                # 2. Migrate ecg_comparisons if needed
+                cursor = conn.execute("PRAGMA table_info(ecg_comparisons)")
+                has_delta_json = any(row[1] == "delta_json" for row in cursor.fetchall())
+                if has_delta_json:
+                    conn.execute("ALTER TABLE ecg_comparisons RENAME TO ecg_comparisons_old")
+                    conn.execute(
+                        """
+                        CREATE TABLE ecg_comparisons (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            record_a_id INTEGER NOT NULL,
+                            record_b_id INTEGER NOT NULL,
+                            alignment_method TEXT,
+                            heart_rate_bpm REAL,
+                            pr_interval_ms REAL,
+                            qrs_duration_ms REAL,
+                            qt_interval_ms REAL,
+                            created_at TEXT NOT NULL,
+                            FOREIGN KEY(record_a_id) REFERENCES ecg_records(id) ON DELETE CASCADE,
+                            FOREIGN KEY(record_b_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+                        )
+                        """
+                    )
+
+                    comp_cursor = conn.execute("SELECT id, record_a_id, record_b_id, alignment_method, delta_json, created_at FROM ecg_comparisons_old")
+                    for row in comp_cursor.fetchall():
+                        c_id, rec_a, rec_b, align_method, d_json, created = row
+
+                        hr, pr, qrs, qt = None, None, None, None
+                        if d_json:
+                            try:
+                                delta = json.loads(d_json)
+                                if isinstance(delta, dict):
+                                    metrics = delta.get("delta_metrics") if "delta_metrics" in delta else delta
+                                    if isinstance(metrics, dict):
+                                        hr = metrics.get("heart_rate_bpm")
+                                        pr = metrics.get("pr_interval_ms")
+                                        qrs = metrics.get("qrs_duration_ms")
+                                        qt = metrics.get("qt_interval_ms")
+                            except Exception:
+                                pass
+
+                        conn.execute(
+                            """
+                            INSERT INTO ecg_comparisons (
+                                id, record_a_id, record_b_id, alignment_method,
+                                heart_rate_bpm, pr_interval_ms, qrs_duration_ms, qt_interval_ms,
+                                created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (c_id, rec_a, rec_b, align_method, hr, pr, qrs, qt, created)
+                        )
+
+                    conn.execute("DROP TABLE ecg_comparisons_old")
+                self.set_db_schema_version(conn, 3)
+            except sqlite3.Error as e:
+                raise RuntimeError(f"Failed to migrate to schema version 3: {e}")
+
         self.set_db_schema_version(conn, self._schema_version)
 
     def create_indexes(self, conn: sqlite3.Connection) -> None:
@@ -200,7 +351,21 @@ class ECGDatabase:
                     root_cause_time TEXT,
                     image_filename TEXT NOT NULL,
                     image_hash TEXT NOT NULL,
-                    analysis_json TEXT NOT NULL,
+                    ms_per_pixel REAL,
+                    mV_per_pixel REAL,
+                    pixels_per_mm REAL,
+                    signal_mV TEXT,
+                    time_ms TEXT,
+                    p_peaks TEXT,
+                    q_peaks TEXT,
+                    r_peaks TEXT,
+                    s_peaks TEXT,
+                    t_peaks TEXT,
+                    heart_rate_bpm REAL,
+                    rr_intervals_ms TEXT,
+                    pr_interval_ms REAL,
+                    qrs_duration_ms REAL,
+                    qt_interval_ms REAL,
                     created_at TEXT NOT NULL
                 )
                 """
@@ -227,7 +392,10 @@ class ECGDatabase:
                     record_a_id INTEGER NOT NULL,
                     record_b_id INTEGER NOT NULL,
                     alignment_method TEXT,
-                    delta_json TEXT NOT NULL,
+                    heart_rate_bpm REAL,
+                    pr_interval_ms REAL,
+                    qrs_duration_ms REAL,
+                    qt_interval_ms REAL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(record_a_id) REFERENCES ecg_records(id) ON DELETE CASCADE,
                     FOREIGN KEY(record_b_id) REFERENCES ecg_records(id) ON DELETE CASCADE
@@ -334,7 +502,32 @@ class ECGDatabase:
                 return {}
             columns = [description[0] for description in cursor.description]
             data = dict(zip(columns, row))
-            data["analysis"] = json.loads(data["analysis_json"])
+            
+            # Reconstruct the nested analysis dictionary structure for compatibility
+            analysis = {
+                "ms_per_pixel": data.get("ms_per_pixel"),
+                "mV_per_pixel": data.get("mV_per_pixel"),
+                "pixels_per_mm": data.get("pixels_per_mm"),
+                "signal_mV": json.loads(data.get("signal_mV")) if data.get("signal_mV") else [],
+                "time_ms": json.loads(data.get("time_ms")) if data.get("time_ms") else [],
+                "features": {
+                    "p_peaks": json.loads(data.get("p_peaks")) if data.get("p_peaks") else [],
+                    "q_peaks": json.loads(data.get("q_peaks")) if data.get("q_peaks") else [],
+                    "r_peaks": json.loads(data.get("r_peaks")) if data.get("r_peaks") else [],
+                    "s_peaks": json.loads(data.get("s_peaks")) if data.get("s_peaks") else [],
+                    "t_peaks": json.loads(data.get("t_peaks")) if data.get("t_peaks") else []
+                },
+                "metrics": {
+                    "heart_rate_bpm": data.get("heart_rate_bpm"),
+                    "rr_intervals_ms": json.loads(data.get("rr_intervals_ms")) if data.get("rr_intervals_ms") else [],
+                    "pr_interval_ms": data.get("pr_interval_ms"),
+                    "qrs_duration_ms": data.get("qrs_duration_ms"),
+                    "qt_interval_ms": data.get("qt_interval_ms")
+                }
+            }
+            data["analysis"] = analysis
+            # Keep a serialized analysis_json representation in data if any code specifically looks for it
+            data["analysis_json"] = json.dumps(analysis)
             return data
         except (sqlite3.Error, json.JSONDecodeError) as e:
             raise RuntimeError(f"Failed to load record {record_id}: {e}")
@@ -345,13 +538,21 @@ class ECGDatabase:
             image_filename = self.save_image_bytes(image_bytes, ext)
             image_hash = self.compute_hash(image_bytes)
             created_at = datetime.now(timezone.utc).isoformat()
+
+            # Unpack analysis dictionary
+            features = analysis.get("features", {})
+            metrics = analysis.get("metrics", {})
+
             with sqlite3.connect(self._paths.db_path) as conn:
                 cur = conn.execute(
                     """
                     INSERT INTO ecg_records (
                         patient_id, ecg_datetime, root_cause, root_cause_time,
-                        image_filename, image_hash, analysis_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        image_filename, image_hash, ms_per_pixel, mV_per_pixel, pixels_per_mm,
+                        signal_mV, time_ms, p_peaks, q_peaks, r_peaks, s_peaks, t_peaks,
+                        heart_rate_bpm, rr_intervals_ms, pr_interval_ms, qrs_duration_ms, qt_interval_ms,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         metadata.get("patient_id"),
@@ -360,7 +561,21 @@ class ECGDatabase:
                         metadata.get("root_cause_time"),
                         image_filename,
                         image_hash,
-                        json.dumps(analysis),
+                        analysis.get("ms_per_pixel"),
+                        analysis.get("mV_per_pixel"),
+                        analysis.get("pixels_per_mm"),
+                        json.dumps(analysis.get("signal_mV", [])),
+                        json.dumps(analysis.get("time_ms", [])),
+                        json.dumps(features.get("p_peaks", [])),
+                        json.dumps(features.get("q_peaks", [])),
+                        json.dumps(features.get("r_peaks", [])),
+                        json.dumps(features.get("s_peaks", [])),
+                        json.dumps(features.get("t_peaks", [])),
+                        metrics.get("heart_rate_bpm"),
+                        json.dumps(metrics.get("rr_intervals_ms", [])),
+                        metrics.get("pr_interval_ms"),
+                        metrics.get("qrs_duration_ms"),
+                        metrics.get("qt_interval_ms"),
                         created_at,
                     ),
                 )

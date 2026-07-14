@@ -158,7 +158,7 @@ flowchart LR
 ### 5.1.3 Data Persistence Workflow
 ```mermaid
 flowchart TB
-   A[Analysis Result] --> B[Save JSON Payload]
+   A[Analysis Result] --> B[Save Expanded Columns]
    A --> C[Store Image File]
    B --> D[(SQLite: ecg_records)]
    C --> E[[data/images/]]
@@ -172,7 +172,7 @@ flowchart TB
 - **Feature estimation:** windowed search around R‑peaks.
 - **Alignment:** R‑peak alignment; cross‑correlation fallback.
 
-## 7. Database Schema
+## 7. Database Schema (Version 3)
 **Table: ecg_records**
 - `id` (PK)
 - `patient_id`
@@ -181,15 +181,28 @@ flowchart TB
 - `root_cause_time`
 - `image_filename`
 - `image_hash`
-- `analysis_json`
+- `ms_per_pixel`
+- `mV_per_pixel`
+- `pixels_per_mm`
+- `signal_mV` (JSON array text)
+- `time_ms` (JSON array text)
+- `p_peaks`, `q_peaks`, `r_peaks`, `s_peaks`, `t_peaks` (JSON array texts)
+- `heart_rate_bpm`
+- `rr_intervals_ms` (JSON array text)
+- `pr_interval_ms`
+- `qrs_duration_ms`
+- `qt_interval_ms`
 - `created_at`
 
 **Table: ecg_comparisons**
 - `id` (PK)
-- `record_a_id`
-- `record_b_id`
+- `record_a_id` (FK)
+- `record_b_id` (FK)
 - `alignment_method`
-- `delta_json`
+- `heart_rate_bpm` (delta)
+- `pr_interval_ms` (delta)
+- `qrs_duration_ms` (delta)
+- `qt_interval_ms` (delta)
 - `created_at`
 
 ## 8. UI Design

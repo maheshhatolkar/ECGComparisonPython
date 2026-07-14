@@ -85,6 +85,19 @@ The analysis output dictionary contains two primary segments: raw waveforms and 
 
 ---
 
+## 2.1 Database Persistence Mapping
+
+While the runtime application uses nested dictionaries to represent analysis payloads (for backwards compatibility), these fields are stored directly in individual database columns in SQLite (Schema Version 3) under the `ecg_records` table:
+
+* **Calibration Constants**: `ms_per_pixel` (REAL), `mV_per_pixel` (REAL), `pixels_per_mm` (REAL).
+* **Waveform Coordinate Arrays**: `signal_mV` (TEXT), `time_ms` (TEXT) stored as serialized JSON lists.
+* **Feature Indexes**: `p_peaks`, `q_peaks`, `r_peaks`, `s_peaks`, `t_peaks` (TEXT) stored as serialized JSON lists.
+* **Clinical Metrics**: `heart_rate_bpm` (REAL), `pr_interval_ms` (REAL), `qrs_duration_ms` (REAL), `qt_interval_ms` (REAL), and `rr_intervals_ms` (TEXT).
+
+Similarly, the comparisons table (`ecg_comparisons`) separates delta metric attributes into individual columns: `heart_rate_bpm`, `pr_interval_ms`, `qrs_duration_ms`, and `qt_interval_ms`.
+
+---
+
 ## 3. Signal Comparison & Delta Metrics
 
 To track changes over time, monitor therapy response, or compare separate patient records side-by-side, the system incorporates a dedicated **ECG Comparison Module**. This module is implemented primarily via the `ECGAligner` class in [analyzer.py](file:///c:/Projects/ECGComparisonPython/analyzer.py#L268), integrated into the Streamlit Web UI ([ECGComparisonPython.py](file:///c:/Projects/ECGComparisonPython/ECGComparisonPython.py)), and exposed via the FastAPI backend ([main.py](file:///c:/Projects/ECGComparisonPython/mobile_backend/main.py)).

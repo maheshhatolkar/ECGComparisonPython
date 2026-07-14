@@ -261,16 +261,12 @@ def test_data_export_formatting(tmp_path):
     assert "pixels_per_mm" in df.columns
     assert "signal_mV" in df.columns
     assert "time_ms" in df.columns
-    assert "features" in df.columns
-    assert "metrics" in df.columns
 
     # Verify nested metrics
-    assert "metrics_heart_rate_bpm" in df.columns
     assert "heart_rate_bpm" in df.columns
     assert df.loc[0, "heart_rate_bpm"] == 75.0
 
     # Verify nested features
-    assert "features_r_peaks" in df.columns
     assert "r_peaks" in df.columns
 
     # 4. Verify full export runs successfully
