@@ -10,12 +10,287 @@ import streamlit as st
 import fitz
 from PIL import Image
 
-from db import init_db, get_setting, set_setting, load_records, load_record, save_record, delete_record, compute_hash, StoragePaths
-from analyzer import preprocess_image, detect_grid_spacing, build_analysis, align_signals, comparison_metrics, metrics_table, analysis_to_exports
-from auth import log_audit, authenticate_user, is_user_management_enabled, get_session_timeout_minutes, user_has_role, require_roles, enforce_session_timeout, create_user, update_user, reset_password, list_audit_logs, list_users
-from plotting import render_signal_plot, render_comparison_plot, render_delta_plot
-import data_export
-import matplotlib.pyplot as plt
+import requests
+import base64
+import hashlib
+
+import db
+import auth
+
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+
+def init_db(*args, **kwargs):
+    try:
+        db.init_db()
+    except Exception:
+        pass
+    try:
+        requests.get(f"{BACKEND_URL}/records", timeout=1)
+    except Exception:
+        pass
+
+def get_setting(key: str, default: str = "") -> str:
+    try:
+        res = requests.get(f"{BACKEND_URL}/settings/{key}", params={"default": default}, timeout=1)
+        if res.status_code == 200:
+            val = res.json().get("value")
+            if val is not None:
+                return str(val)
+    except Exception:
+        pass
+    try:
+        val = db.get_setting(key, default)
+        return str(val) if val is not None else default
+    except Exception:
+        return default
+
+def set_setting(key: str, value: str):
+    try:
+        requests.post(f"{BACKEND_URL}/settings/{key}", data={"value": value}, timeout=1)
+    except Exception:
+        pass
+    try:
+        db.set_setting(key, value)
+    except Exception:
+        pass
+
+def load_records() -> pd.DataFrame:
+    try:
+        res = requests.get(f"{BACKEND_URL}/records")
+        if res.status_code == 200:
+            return pd.DataFrame(res.json())
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+def load_record(record_id: int) -> dict:
+    try:
+        res = requests.get(f"{BACKEND_URL}/record/{record_id}")
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+    return {}
+
+def save_record(metadata: dict, image_bytes: bytes, ext: str, analysis: dict) -> int:
+    try:
+        files = {"file": ("ecg_image" + ext, image_bytes, "image/png" if ext == ".png" else "image/jpeg")}
+        data = {
+            "metadata": json.dumps(metadata),
+            "pixels_per_mm": analysis.get("pixels_per_mm", 20.0),
+            "prominence": analysis.get("prominence", 0.5)
+        }
+        res = requests.post(f"{BACKEND_URL}/save_record", files=files, data=data)
+        if res.status_code == 200:
+            return res.json().get("record_id")
+    except Exception as e:
+        st.error(f"Save record API failed: {e}")
+    return 0
+
+def delete_record(record_id: int) -> bool:
+    try:
+        res = requests.delete(f"{BACKEND_URL}/record/{record_id}")
+        return res.status_code == 200
+    except Exception:
+        return False
+
+def compute_hash(image_bytes: bytes) -> str:
+    return hashlib.sha256(image_bytes).hexdigest()
+
+def detect_grid_spacing_api(image_bytes: bytes) -> float | None:
+    try:
+        files = {"file": ("ecg_image.png", image_bytes, "image/png")}
+        res = requests.post(f"{BACKEND_URL}/detect_grid_spacing", files=files)
+        if res.status_code == 200:
+            return res.json().get("grid_spacing")
+    except Exception:
+        pass
+    return None
+
+def build_analysis_api(image_bytes: bytes, pixels_per_mm: float, prominence: float) -> dict:
+    try:
+        files = {"file": ("ecg_image.png", image_bytes, "image/png")}
+        data = {"pixels_per_mm": pixels_per_mm, "prominence": prominence}
+        res = requests.post(f"{BACKEND_URL}/analyze", files=files, data=data)
+        if res.status_code == 200:
+            return res.json()
+    except Exception as e:
+        st.error(f"Analysis API failed: {e}")
+    return {}
+
+def align_and_compare_api(record_a=None, record_b=None, analysis_a=None, analysis_b=None) -> dict:
+    try:
+        data = {}
+        if record_a is not None:
+            data["record_a"] = record_a
+        if record_b is not None:
+            data["record_b"] = record_b
+        if analysis_a is not None:
+            data["analysis_a"] = json.dumps(analysis_a)
+        if analysis_b is not None:
+            data["analysis_b"] = json.dumps(analysis_b)
+        
+        res = requests.post(f"{BACKEND_URL}/compare", data=data)
+        if res.status_code == 200:
+            return res.json()
+    except Exception as e:
+        st.error(f"Comparison API failed: {e}")
+    return {}
+
+def metrics_table(metrics: dict) -> list:
+    return [
+        {"Parameter": "Heart Rate (bpm)", "Value": metrics.get("heart_rate_bpm")},
+        {"Parameter": "PR Interval (ms)", "Value": metrics.get("pr_interval_ms")},
+        {"Parameter": "QRS Duration (ms)", "Value": metrics.get("qrs_duration_ms")},
+        {"Parameter": "QT Interval (ms)", "Value": metrics.get("qt_interval_ms")},
+    ]
+
+def render_signal_plot_api(analysis: dict):
+    try:
+        res = requests.post(f"{BACKEND_URL}/analysis/plot", json=analysis)
+        if res.status_code == 200:
+            img_b64 = res.json().get("plot_base64")
+            if img_b64:
+                return base64.b64decode(img_b64)
+    except Exception:
+        pass
+    return None
+
+def render_comparison_plot_api(aligned_a: list, aligned_b: list):
+    try:
+        res = requests.post(f"{BACKEND_URL}/compare/plot", json={"aligned_a": aligned_a, "aligned_b": aligned_b})
+        if res.status_code == 200:
+            img_b64 = res.json().get("plot_base64")
+            if img_b64:
+                return base64.b64decode(img_b64)
+    except Exception:
+        pass
+    return None
+
+def render_delta_plot_api(delta: list):
+    try:
+        res = requests.post(f"{BACKEND_URL}/compare/delta_plot", json={"delta": delta})
+        if res.status_code == 200:
+            img_b64 = res.json().get("plot_base64")
+            if img_b64:
+                return base64.b64decode(img_b64)
+    except Exception:
+        pass
+    return None
+
+def authenticate_user(username, password) -> dict | None:
+    try:
+        res = requests.post(f"{BACKEND_URL}/login", data={"username": username, "password": password}, timeout=2)
+        if res.status_code == 200:
+            data = res.json()
+            st.session_state["token"] = data.get("token", "")
+            return data
+    except Exception:
+        pass
+    try:
+        return auth.authenticate_user(username, password)
+    except Exception:
+        return None
+
+def is_user_management_enabled() -> bool:
+    return get_setting("user_management_enabled", "true") == "true"
+
+def get_session_timeout_minutes() -> int:
+    try:
+        return int(get_setting("session_timeout_minutes", "30"))
+    except Exception:
+        return 30
+
+def user_has_role(allowed_roles: list) -> bool:
+    if not is_user_management_enabled():
+        return True
+    if not st.session_state.get("authenticated"):
+        return False
+    return st.session_state.get("role") in allowed_roles
+
+def require_roles(allowed_roles: list):
+    if not is_user_management_enabled():
+        return
+    if not st.session_state.get("authenticated"):
+        st.error("Authentication required.")
+        st.stop()
+    if st.session_state.get("role") not in allowed_roles:
+        st.error("Access denied. Insufficient permissions.")
+        st.stop()
+
+def enforce_session_timeout():
+    if not is_user_management_enabled() or not st.session_state.get("authenticated"):
+        return
+    last_act_str = st.session_state.get("last_activity")
+    if last_act_str:
+        try:
+            last_act = datetime.fromisoformat(last_act_str)
+            timeout = get_session_timeout_minutes()
+            delta_mins = (datetime.now(timezone.utc) - last_act).total_seconds() / 60.0
+            if delta_mins > timeout:
+                st.session_state.clear()
+                st.warning("Session timed out due to inactivity.")
+                st.stop()
+        except Exception:
+            pass
+    st.session_state["last_activity"] = datetime.now(timezone.utc).isoformat()
+
+def create_user(username, display_name, role, password, enabled):
+    try:
+        requests.post(f"{BACKEND_URL}/users", data={
+            "username": username,
+            "display_name": display_name,
+            "role": role,
+            "password": password,
+            "enabled": enabled
+        })
+    except Exception:
+        pass
+
+def update_user(user_id, display_name, role, enabled):
+    try:
+        requests.put(f"{BACKEND_URL}/users/{user_id}", data={
+            "display_name": display_name,
+            "role": role,
+            "enabled": enabled
+        })
+    except Exception:
+        pass
+
+def reset_password(user_id, password):
+    try:
+        requests.post(f"{BACKEND_URL}/users/{user_id}/reset_password", data={"password": password})
+    except Exception:
+        pass
+
+def list_users() -> pd.DataFrame:
+    try:
+        res = requests.get(f"{BACKEND_URL}/users")
+        if res.status_code == 200:
+            return pd.DataFrame(res.json())
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+def list_audit_logs(limit: int = 200) -> pd.DataFrame:
+    try:
+        res = requests.get(f"{BACKEND_URL}/audit_logs", params={"limit": limit})
+        if res.status_code == 200:
+            return pd.DataFrame(res.json())
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+def log_audit(event_type: str, outcome: str, user: dict | None = None, details: str | None = None):
+    try:
+        requests.post(f"{BACKEND_URL}/audit_log", data={
+            "event_type": event_type,
+            "outcome": outcome,
+            "user_json": json.dumps(user) if user else "",
+            "details": details or ""
+        })
+    except Exception:
+        pass
 
 def mask_patient_id(value: str | None) -> str | None:
     if not value:
@@ -100,7 +375,30 @@ def main():
     default_admin_created = get_setting("default_admin_created") == "true"
     if default_admin_created and is_user_management_enabled():
         # Surface the default admin reminder in case password needs reset.
-        st.warning("Default admin account exists (username: admin). Please reset the password.")
+        st.warning("Default admin account exists (username: admin, password: admin). Please log in.")
+
+    if is_user_management_enabled() and not st.session_state.get("authenticated"):
+        st.info("🔒 **User Management is Enabled.** Please log in below or from the sidebar to access the application.")
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            with st.form("main_login_form"):
+                st.subheader("Login to ECG Application")
+                username = st.text_input("Username", key="main_user")
+                password = st.text_input("Password", type="password", key="main_pass")
+                submitted = st.form_submit_button("Login", type="primary")
+                if submitted:
+                    user = authenticate_user(username, password)
+                    if user:
+                        st.session_state["authenticated"] = True
+                        st.session_state["user_id"] = user["id"]
+                        st.session_state["username"] = user["username"]
+                        st.session_state["role"] = user["role"]
+                        st.session_state["last_activity"] = datetime.now(timezone.utc).isoformat()
+                        log_audit("login", "success", user)
+                        st.rerun()
+                    log_audit("login", "failure", {"username": username})
+                    st.error("Invalid credentials or user disabled.")
+        return
 
     # Define the top-level tabs. Include Admin tab only when user management is enabled.
     base_tabs = ["Analyze", "Compare", "Records"]
@@ -148,8 +446,7 @@ def main():
                 st.session_state["image_ext"] = ext
 
             st.image(image, caption="Original ECG", use_container_width=True)
-            prep = preprocess_image(image)
-            grid_spacing = detect_grid_spacing(prep["enhanced"])
+            grid_spacing = detect_grid_spacing_api(image_bytes)
             st.write("Grid detection:")
 
             if grid_spacing:
@@ -163,25 +460,17 @@ def main():
             prominence_factor = st.slider("R-peak sensitivity", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
 
             if st.button("Run Analysis"):
-                # Run the full pipeline and display plots/metrics.
-                analysis = build_analysis(image, pixels_per_mm, prominence_factor)
+                # Run the full pipeline and display plots/metrics via API.
+                analysis = build_analysis_api(image_bytes, pixels_per_mm, prominence_factor)
                 st.session_state["analysis"] = analysis
 
             if "analysis" in st.session_state:
                 # Render waveform plot, metrics, and export options.
                 analysis = st.session_state["analysis"]
-                signal = np.array(analysis["signal_mV"])
-
-    # Admin-only Analysis tab logic moved to after the Analyze save form to avoid
-    # interfering with the per-upload analysis rendering flow above.
-                time_ms = np.array(analysis["time_ms"])
-
-                fig = render_signal_plot(signal, time_ms, analysis["features"])
-                st.pyplot(fig)
-                plt.close(fig)
+                plot_bytes = render_signal_plot_api(analysis)
+                if plot_bytes:
+                    st.image(plot_bytes, caption="ECG Waveform Analysis")
                 st.dataframe(metrics_table(analysis["metrics"]))
-
-                csv_data = analysis_to_exports(analysis)
 
                 with st.form("save_record"):
                     st.write("Save to database")
@@ -254,13 +543,12 @@ def main():
             selected_upload = upload or camera_photo
             
             if selected_upload:
-                # Run analysis from the uploaded file on-demand.
-                image, _, _ = load_image_from_upload(selected_upload)
+                # Run analysis from the uploaded file on-demand via API.
+                image, image_bytes, ext = load_image_from_upload(selected_upload)
                 if image is None:
                     st.error("Unable to read the uploaded file.")
                     return None
-                prep = preprocess_image(image)
-                grid_spacing = detect_grid_spacing(prep["enhanced"])
+                grid_spacing = detect_grid_spacing_api(image_bytes)
                 manual_pixels_per_mm = st.slider(
                     f"Pixels per mm ({label})",
                     min_value=5.0,
@@ -278,7 +566,7 @@ def main():
                     step=0.1,
                     key=f"prom_{label}",
                 )
-                return build_analysis(image, pixels_per_mm, prominence_factor)
+                return build_analysis_api(image_bytes, pixels_per_mm, prominence_factor)
             return None
 
         col_a, col_b = st.columns(2)
@@ -300,26 +588,25 @@ def main():
             analysis_b = get_analysis_from_source("B", source_b)
 
         if analysis_a and analysis_b and st.button("Compare"):
-            # Align, compare, and visualize deltas.
-            signal_a = np.array(analysis_a["signal_mV"])
-            signal_b = np.array(analysis_b["signal_mV"])
-            aligned_a, aligned_b, method = align_signals(
-                signal_a,
-                signal_b,
-                analysis_a["features"]["r_peaks"],
-                analysis_b["features"]["r_peaks"],
-            )
-            delta = aligned_b - aligned_a
+            comp_res = align_and_compare_api(analysis_a=analysis_a, analysis_b=analysis_b)
+            if comp_res:
+                method = comp_res.get("alignment_method")
+                st.write(f"Alignment method: {method}")
 
-            st.write(f"Alignment method: {method}")
-            fig = render_comparison_plot(aligned_a, aligned_b)
-            st.pyplot(fig)
-            plt.close(fig)
-            fig = render_delta_plot(delta)
-            st.pyplot(fig)
-            plt.close(fig)
+                # Fetch visual comparison plot
+                comp_plot = render_comparison_plot_api(comp_res["aligned_a"], comp_res["aligned_b"])
+                if comp_plot:
+                    st.image(comp_plot, caption="ECG Signals Comparison")
 
-            delta_metrics = comparison_metrics(analysis_a["metrics"], analysis_b["metrics"])
+                # Calculate delta and fetch delta plot
+                aligned_a = np.array(comp_res["aligned_a"])
+                aligned_b = np.array(comp_res["aligned_b"])
+                delta = (aligned_b - aligned_a).tolist()
+                delta_plot = render_delta_plot_api(delta)
+                if delta_plot:
+                    st.image(delta_plot, caption="ECG Signals Delta (B - A)")
+
+                delta_metrics = comp_res.get("delta_metrics", {})
             delta_df = pd.DataFrame(
                 [
                     {
@@ -454,14 +741,11 @@ def main():
                     record = load_record(record_map[selected_label])
                     analysis = record.get("analysis")
                     if analysis:
-                        signal = np.array(analysis["signal_mV"])
-                        time_ms = np.array(analysis["time_ms"])
-                        
                         st.write("**Graphical Format (Waveform)**")
-                        fig = render_signal_plot(signal, time_ms, analysis["features"])
-                        st.pyplot(fig)
-                        plt.close(fig)
-                        
+                        plot_bytes = render_signal_plot_api(analysis)
+                        if plot_bytes:
+                            st.image(plot_bytes, caption="ECG Waveform Analysis")
+
                         st.write("**Tabular Format (Metrics)**")
                         st.dataframe(metrics_table(analysis["metrics"]), use_container_width=True)
                     else:
@@ -610,45 +894,48 @@ def main():
             st.subheader("Analysis")
             st.write("Export the entire database to CSV files and a combined Excel workbook. View tables below.")
 
-            if st.button("Export all data (CSV + Excel)"):
+            if st.button("Export all data (Excel Workbook)"):
                 try:
-                    exports = data_export.export_all_data()
-                    excel_path = exports.get("excel_file")
-                    csv_files = exports.get("csv_files")
-                    st.success("Export completed")
-                    if excel_path and os.path.exists(excel_path):
-                        with open(excel_path, "rb") as f:
-                            st.download_button(
-                                label="Download Excel workbook",
-                                data=f.read(),
-                                file_name=os.path.basename(excel_path),
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                on_click=lambda: log_audit("export_all_data", "success", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")} ),
-                            )
-                    if csv_files:
-                        st.write("CSV files:")
-                        for p in csv_files:
-                            if os.path.exists(p):
-                                with open(p, "rb") as f:
-                                    st.download_button(label=f"Download {os.path.basename(p)}", data=f.read(), file_name=os.path.basename(p), mime="text/csv")
+                    res = requests.post(f"{BACKEND_URL}/export")
+                    if res.status_code == 200:
+                        excel_data = res.content
+                        st.download_button(
+                            label="Download Excel workbook",
+                            data=excel_data,
+                            file_name="ecg_export.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            on_click=lambda: log_audit("export_all_data", "success", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")} ),
+                        )
+                        st.success("Export ready for download!")
+                    else:
+                        st.error(f"Export failed: server returned status code {res.status_code}")
                 except Exception as e:
                     st.error(f"Export failed: {e}")
                     log_audit("export_all_data", "failure", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")}, str(e))
 
             # Present all database tables in-page as dataframes
             try:
-                paths = StoragePaths.current()
-                conn = sqlite3.connect(paths.db_path)
-                table_names = data_export._get_table_names(conn)
-                for table in table_names:
-                    try:
-                        df = data_export.get_table_data(conn, table)
-                    except Exception:
-                        st.warning(f"Unable to read table: {table}")
-                        continue
-                    st.markdown(f"### {table}")
-                    st.dataframe(df, use_container_width=True)
-                conn.close()
+                res_tables = requests.get(f"{BACKEND_URL}/tables")
+                if res_tables.status_code == 200:
+                    table_names = res_tables.json()
+                    for table in table_names:
+                        res_data = requests.get(f"{BACKEND_URL}/table/{table}")
+                        if res_data.status_code == 200:
+                            df = pd.DataFrame(res_data.json())
+                            st.markdown(f"### {table}")
+                            st.dataframe(df, use_container_width=True)
+                            
+                            # Render inline CSV download button for the table
+                            csv_str = df.to_csv(index=False)
+                            st.download_button(
+                                label=f"Download {table} as CSV",
+                                data=csv_str,
+                                file_name=f"{table}.csv",
+                                mime="text/csv",
+                                key=f"csv_download_{table}"
+                            )
+                else:
+                    st.error("Failed to load tables list from backend.")
             except Exception as e:
                 st.error(f"Failed to load tables: {e}")
 

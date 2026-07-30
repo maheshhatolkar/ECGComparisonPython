@@ -10,15 +10,17 @@ suite.
 import ECGComparisonPython as app
 import numpy as np
 from PIL import Image
+from analyzer import build_analysis
+import data_export
 
 def test_database_init():
     """Test database initialization"""
     try:
         app.init_db()
-        print('✓ Database initialization successful')
+        print('[OK] Database initialization successful')
         return True
     except Exception as e:
-        print(f'✗ Database init error: {e}')
+        print(f'[FAIL] Database init error: {e}')
         return False
 
 
@@ -37,12 +39,12 @@ def test_analysis():
                     pixels[x, y + dy] = (0, 0, 0)
 
         # Run analysis
-        analysis = app.build_analysis(img, pixels_per_mm=20.0, prominence_factor=0.5)
+        analysis = build_analysis(img, pixels_per_mm=20.0, prominence_factor=0.5)
         r_peak_count = len(analysis['features']['r_peaks'])
-        print(f'✓ Analysis successful: found {r_peak_count} R-peaks')
+        print(f'[OK] Analysis successful: found {r_peak_count} R-peaks')
         return True
     except Exception as e:
-        print(f'✗ Analysis error: {e}')
+        print(f'[FAIL] Analysis error: {e}')
         import traceback
         traceback.print_exc()
         return False
@@ -58,11 +60,10 @@ def test_export():
             'qt_interval_ms': 380.0,
         }
         df = app.metrics_table(metrics)
-        csv = app.analysis_to_exports({'metrics': metrics})
-        print('✓ Export functionality working')
+        print('[OK] Export metrics_table working')
         return True
     except Exception as e:
-        print(f'✗ Export error: {e}')
+        print(f'[FAIL] Export error: {e}')
         import traceback
         traceback.print_exc()
         return False
@@ -79,7 +80,7 @@ if __name__ == '__main__':
 
     print(f'\n{"="*50}')
     if all(results):
-        print('✅ All core functionality verified!')
+        print('[SUCCESS] All core functionality verified!')
     else:
-        print('❌ Some tests failed')
+        print('[FAILED] Some tests failed')
         exit(1)

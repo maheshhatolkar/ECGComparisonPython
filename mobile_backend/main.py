@@ -26,7 +26,7 @@ Security reminders:
 - Use HTTPS in production and validate/limit file upload sizes.
 """
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -43,7 +43,7 @@ import json
 # Re-use core application helpers implemented in the main module. These
 # functions perform analysis, interact with the SQLite DB, and produce
 # structures compatible with our UI code.
-from db import compute_hash, StoragePaths, load_records, load_record, save_record
+from db import compute_hash, StoragePaths, load_records, load_record, save_record, get_setting, set_setting
 from analyzer import build_analysis, comparison_metrics, align_signals
 from auth import get_user_by_username, verify_password
 from data_export import export_all_data
@@ -68,8 +68,8 @@ app = FastAPI(title="ECGComparisonMobileBackend")
 # different origins. In production, restrict this list to trusted origins.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origin_regex=".*",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -132,18 +132,41 @@ def verify_token(token: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-@app.post("/analyze")
-async def analyze_image(pixels_per_mm: float = Form(...), prominence: float = Form(0.5), file: UploadFile = File(...)):
-    """Analyze an uploaded ECG image and return the analysis dictionary.
+async def _extract_image_bytes(file: UploadFile | None = None, image_base64: str | None = None) -> bytes:
+    if file and file.filename:
+        return await file.read()
+    if image_base64:
+        if "," in image_base64:
+            image_base64 = image_base64.split(",", 1)[1]
+        return base64.b64decode(image_base64)
+    if file:
+        return await file.read()
+    raise HTTPException(status_code=400, detail="No image file or image_base64 provided")
 
-    The endpoint expects a multipart/form-data POST with the image file and
-    optional numeric parameters (pixels_per_mm and prominence). The function
-    converts the uploaded bytes into a PIL Image and calls the existing
-    build_analysis() helper from ECGComparisonPython.py. Since analysis
-    results may contain numpy arrays, we recursively normalize them into
-    Python lists so they are JSON serializable.
-    """
-    contents = await file.read()
+
+@app.post("/analyze")
+async def analyze_image(request: Request):
+    """Analyze an uploaded ECG image (file upload, form image_base64, or JSON) and return the analysis dictionary."""
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+        img_b64 = body.get("image_base64")
+        pixels_per_mm = float(body.get("pixels_per_mm", 20.0))
+        prominence = float(body.get("prominence", 0.5))
+        contents = await _extract_image_bytes(None, img_b64)
+    else:
+        form = await request.form()
+        file_obj = form.get("file")
+        img_b64 = form.get("image_base64")
+        pixels_per_mm = float(form.get("pixels_per_mm", 20.0))
+        prominence = float(form.get("prominence", 0.5))
+        if file_obj and hasattr(file_obj, "read"):
+            contents = await file_obj.read()
+        elif img_b64:
+            contents = await _extract_image_bytes(None, str(img_b64))
+        else:
+            raise HTTPException(status_code=400, detail="No image file or image_base64 provided")
+
     if len(contents) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large")
     try:
@@ -167,8 +190,20 @@ async def analyze_image(pixels_per_mm: float = Form(...), prominence: float = Fo
     return JSONResponse(content=_normalize(analysis))
 
 
+@app.get("/settings/{key}")
+async def api_get_setting(key: str, default: str = ""):
+    val = get_setting(key, default)
+    return JSONResponse(content={"key": key, "value": val if val is not None else default})
+
+
+@app.post("/settings/{key}")
+async def api_set_setting(key: str, value: str = Form("")):
+    set_setting(key, value)
+    return JSONResponse(content={"key": key, "value": value})
+
+
 @app.post("/login")
-async def login(username: str = Form(...), password: str = Form(...)):
+async def login(username: str = Form(""), password: str = Form("")):
     """Authenticate a user using the existing local user store.
 
     This endpoint reuses the get_user_by_username() and verify_password()
@@ -176,6 +211,8 @@ async def login(username: str = Form(...), password: str = Form(...)):
     user profile and a short-lived signed token the mobile client can use to
     authenticate administrative requests.
     """
+    if not username or not password:
+        raise HTTPException(status_code=401, detail="Username and password are required")
     user = get_user_by_username(username)
     if not user or not user.get("enabled"):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -213,41 +250,61 @@ async def get_single_record(record_id: int):
 
 
 @app.post("/save_record")
-async def api_save_record(
-    metadata: str = Form(...),
-    file: UploadFile = File(...),
-    pixels_per_mm: float = Form(20.0),
-    prominence: float = Form(0.5),
-):
+async def api_save_record(request: Request):
     """Save an ECG record: accept image + metadata, run analysis, and store.
 
-    The client provides metadata as a JSON-encoded string in the `metadata`
-    form field. The uploaded file content and automatically produced analysis
-    dictionary are persisted via the existing save_record() helper which
-    returns the created record id.
+    The file field is truly optional – when omitted the server stores
+    a minimal placeholder image and an empty analysis skeleton so the
+    record metadata (patient_id, ecg_datetime, root_cause, …) is never
+    lost due to an image processing error.
     """
-    contents = await file.read()
+    form = await request.form()
+    metadata = form.get("metadata", "{}")
+    pixels_per_mm = float(form.get("pixels_per_mm", 20.0))
+    prominence = float(form.get("prominence", 0.5))
+    file_obj = form.get("file")
+
+    if file_obj and hasattr(file_obj, "read"):
+        contents = await file_obj.read()
+        ext = os.path.splitext(getattr(file_obj, "filename", "") or "")[1] or ".png"
+    else:
+        # No file uploaded — create a small placeholder image
+        img_temp = Image.new("RGB", (800, 300), color="white")
+        buf = io.BytesIO()
+        img_temp.save(buf, format="PNG")
+        contents = buf.getvalue()
+        ext = ".png"
+
     if len(contents) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large")
     try:
         image = Image.open(io.BytesIO(contents)).convert("RGB")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
-    analysis = build_analysis(image, pixels_per_mm, prominence)
-    # metadata expected as JSON string; fall back to raw string note if parse fails
+
+    # Run analysis but don't fail the save if the image lacks a valid waveform
+    try:
+        analysis = build_analysis(image, pixels_per_mm, prominence)
+    except Exception:
+        # Return an empty analysis skeleton so the record can still be saved
+        analysis = {
+            "signal_mV": [],
+            "time_ms": [],
+            "features": {"r_peaks": [], "p_peaks": [], "t_peaks": [], "q_valleys": [], "s_valleys": []},
+            "metrics": {"heart_rate_bpm": None, "pr_interval_ms": None, "qrs_duration_ms": None, "qt_interval_ms": None},
+        }
+
     try:
         meta = json.loads(metadata)
     except Exception:
         meta = {"note": metadata}
 
-    # Determine a safe extension to persist (fallback to .png)
-    ext = os.path.splitext(file.filename)[1] or ".png"
     record_id = save_record(meta, contents, ext, analysis)
     return JSONResponse(content={"record_id": record_id})
 
 
 @app.post("/compare")
-async def api_compare(record_a: int | None = Form(None), record_b: int | None = Form(None), analysis_a: dict | None = Form(None), analysis_b: dict | None = Form(None)):
+async def api_compare(record_a: int | None = Form(None), record_b: int | None = Form(None), analysis_a: str | None = Form(None), analysis_b: str | None = Form(None)):
     """Compare two ECG analyses (either by record id or inline analysis JSON).
 
     The endpoint returns alignment metadata and numeric delta metrics so the
@@ -255,12 +312,15 @@ async def api_compare(record_a: int | None = Form(None), record_b: int | None = 
     visual comparisons use /compare/plot which returns a PNG image.
     """
 
-    def _ensure_analysis(rec_id, analysis_obj):
+    def _ensure_analysis(rec_id, analysis_str):
         # Prefer the inline analysis payload if provided; otherwise load the
         # analysis from the stored record by id. Returns None when neither is
         # available.
-        if analysis_obj:
-            return analysis_obj
+        if analysis_str:
+            try:
+                return json.loads(analysis_str)
+            except Exception:
+                pass
         if rec_id is not None:
             rec = load_record(int(rec_id))
             return rec.get("analysis")
@@ -385,6 +445,148 @@ async def get_table_data(t: str):
             raise HTTPException(status_code=400, detail=str(e))
     df = df.replace({np.nan: None})
     return JSONResponse(content=df.to_dict(orient="records"))
+
+
+@app.on_event("startup")
+def startup_event():
+    """Initialize database schemas on backend startup."""
+    from db import init_db
+    init_db()
+
+
+@app.get("/settings/{key}")
+async def api_get_setting(key: str, default: str = ""):
+    """Retrieve a configuration setting by key."""
+    from db import get_setting
+    return {"value": get_setting(key, default)}
+
+
+@app.post("/settings/{key}")
+async def api_set_setting(key: str, value: str = Form(...)):
+    """Update a configuration setting."""
+    from db import set_setting
+    set_setting(key, value)
+    return {"status": "success"}
+
+
+@app.get("/users")
+async def api_list_users():
+    """List all registered users."""
+    from auth import list_users
+    df = list_users()
+    df = df.replace({np.nan: None})
+    return JSONResponse(content=df.to_dict(orient="records"))
+
+
+@app.post("/users")
+async def api_create_user(
+    username: str = Form(...),
+    display_name: str = Form(None),
+    role: str = Form(...),
+    password: str = Form(...),
+    enabled: bool = Form(True)
+):
+    """Create a new user account."""
+    from auth import create_user
+    try:
+        create_user(username, display_name, role, password, enabled)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/users/{user_id}")
+async def api_update_user(
+    user_id: int,
+    display_name: str = Form(None),
+    role: str = Form(...),
+    enabled: bool = Form(True)
+):
+    """Update an existing user's details."""
+    from auth import update_user
+    try:
+        update_user(user_id, display_name, role, enabled)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/users/{user_id}/reset_password")
+async def api_reset_password(user_id: int, password: str = Form(...)):
+    """Reset a user's password."""
+    from auth import reset_password
+    try:
+        reset_password(user_id, password)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/audit_logs")
+async def api_list_audit_logs(limit: int = 200):
+    """Retrieve system audit logs."""
+    from auth import list_audit_logs
+    df = list_audit_logs(limit=limit)
+    df = df.replace({np.nan: None})
+    return JSONResponse(content=df.to_dict(orient="records"))
+
+
+@app.post("/audit_log")
+async def api_log_audit(
+    event_type: str = Form(...),
+    outcome: str = Form(...),
+    user_json: str = Form(None),
+    details: str = Form(None)
+):
+    """Log a security or system action event."""
+    from auth import log_audit
+    user = json.loads(user_json) if user_json else None
+    log_audit(event_type, outcome, user, details)
+    return {"status": "success"}
+
+
+@app.delete("/record/{record_id}")
+async def api_delete_record(record_id: int):
+    """Delete a record by ID."""
+    from db import delete_record
+    success = delete_record(record_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return {"status": "success"}
+
+
+@app.post("/detect_grid_spacing")
+async def api_detect_grid_spacing(file: UploadFile = File(...)):
+    """Analyze uploaded image and detect pixels per 1 mm grid spacing."""
+    from analyzer import preprocess_image, detect_grid_spacing
+    contents = await file.read()
+    try:
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        prep = preprocess_image(image)
+        spacing = detect_grid_spacing(prep["enhanced"])
+        return {"grid_spacing": spacing}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/compare/delta_plot")
+async def compare_delta_plot(payload: dict):
+    """Generate a base64 encoded PNG plot of differences between two signals."""
+    from plotting import render_delta_plot
+    import matplotlib.pyplot as plt
+    try:
+        delta = np.array(payload["delta"])
+        fig = render_delta_plot(delta)
+        
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png')
+        plt.close(fig)
+        buf.seek(0)
+        img_base64 = base64.b64encode(buf.read()).decode()
+        return JSONResponse(content={"plot_base64": img_base64})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 if __name__ == "__main__":
     # Allow running the backend directly for development (e.g. python mobile_backend/main.py)

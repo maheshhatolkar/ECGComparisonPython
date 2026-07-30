@@ -90,6 +90,75 @@ def test_api():
             table_data = resp.json()
             print(f"Rows in {t}:", len(table_data))
     
+    print("\nTesting new settings endpoints...")
+    resp = requests.post(f"{BASE_URL}/settings/test_setting", data={"value": "test_val"})
+    if resp.status_code != 200:
+        print("Error POST /settings/test_setting:", resp.status_code, resp.text)
+    resp = requests.get(f"{BASE_URL}/settings/test_setting")
+    if resp.status_code != 200 or resp.json().get("value") != "test_val":
+        print("Error GET /settings/test_setting:", resp.status_code, resp.text)
+    else:
+        print("Settings endpoints tested successfully!")
+
+    print("\nTesting users and audit log endpoints...")
+    resp = requests.get(f"{BASE_URL}/users")
+    if resp.status_code != 200:
+        print("Error GET /users:", resp.status_code, resp.text)
+    else:
+        print("Users list length:", len(resp.json()))
+
+    test_username = f"api_test_user_{int(time.time())}"
+    test_user_data = {
+        "username": test_username,
+        "display_name": "API Test User",
+        "role": "Researcher",
+        "password": "testpassword123",
+        "enabled": "true"
+    }
+    resp = requests.post(f"{BASE_URL}/users", data=test_user_data)
+    if resp.status_code != 200:
+        print("Error POST /users:", resp.status_code, resp.text)
+    else:
+        print(f"Created test user {test_username} successfully!")
+
+    resp = requests.get(f"{BASE_URL}/audit_logs")
+    if resp.status_code != 200:
+        print("Error GET /audit_logs:", resp.status_code, resp.text)
+    else:
+        print("Audit logs count:", len(resp.json()))
+
+    resp = requests.post(f"{BASE_URL}/audit_log", data={
+        "event_type": "api_test_event",
+        "outcome": "success",
+        "details": "Integration test check"
+    })
+    if resp.status_code != 200:
+        print("Error POST /audit_log:", resp.status_code, resp.text)
+    else:
+        print("Logged audit event successfully!")
+
+    print("\nTesting /detect_grid_spacing...")
+    with open("test_ecg.png", "rb") as f:
+        resp = requests.post(f"{BASE_URL}/detect_grid_spacing", files={"file": ("test_ecg.png", f, "image/png")})
+    if resp.status_code != 200:
+        print("Error /detect_grid_spacing:", resp.status_code, resp.text)
+    else:
+        print("Detected grid spacing:", resp.json().get("grid_spacing"))
+
+    print("\nTesting /compare/delta_plot...")
+    resp = requests.post(f"{BASE_URL}/compare/delta_plot", json={"delta": [0.0, 0.1, -0.1, 0.2]})
+    if resp.status_code != 200:
+        print("Error /compare/delta_plot:", resp.status_code, resp.text)
+    else:
+        print("Delta plot base64 length:", len(resp.json().get("plot_base64", "")))
+
+    print(f"\nTesting DELETE /record/{record_id}...")
+    resp = requests.delete(f"{BASE_URL}/record/{record_id}")
+    if resp.status_code != 200:
+        print("Error DELETE /record:", resp.status_code, resp.text)
+    else:
+        print("Deleted record successfully!")
+
     print("\nAll detailed API workflow tests completed successfully!")
 
 if __name__ == "__main__":

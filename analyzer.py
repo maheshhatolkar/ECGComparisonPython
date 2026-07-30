@@ -106,6 +106,8 @@ class ECGAnalyzer:
 
             y_series = pd.Series(y).interpolate(limit_direction="both")
             y_filled = y_series.to_numpy()
+            if np.isnan(y_filled).any():
+                y_filled = np.nan_to_num(y_filled, nan=h / 2.0)
             window = max(5, (w // 200) * 2 + 1)
             y_smooth = savgol_filter(y_filled, window_length=window, polyorder=2)
             return y_smooth

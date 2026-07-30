@@ -2,11 +2,12 @@
   "name": "ecgcomparison-mobile",
   "version": "0.1.0",
   "private": true,
-  "main": "node_modules/expo/AppEntry.js",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "bundle-android": "npx expo export:embed --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res"
   },
   "dependencies": {
     "@react-navigation/native": "^7.3.5",
@@ -19,6 +20,7 @@
     "react-native-screens": "4.25.2"
   },
   "devDependencies": {
+    "@react-native-community/cli": "^15.0.0",
     "eslint": "^10.5.0"
   }
 }

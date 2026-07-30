@@ -1,20 +1,20 @@
 # Architecture Document: ECG Graph Extraction and Analysis System
 
-This document outlines the high-level architecture of the ECG Graph Extraction and Analysis System. The system is designed to process ECG graph images, digitize waveforms, extract clinical features, and facilitate comparison, all while being accessible through both a web interface and a mobile application.
+This document outlines the high-level architecture of the ECG Graph Extraction and Analysis System. The system is designed to process ECG graph images, digitize waveforms, extract clinical features, and facilitate comparison, all while being accessible through both a thin web interface and a mobile application connected to a heavy FastAPI backend.
 
 ## 1. High-Level System Architecture
 
-The project employs a modular, client-server architecture with three primary components:
+The project employs a client-server architecture. Core computations, database persistence, and visual rendering are handled by the **Heavy Server** (FastAPI backend), while the client applications act as **Thin Clients** communicating via HTTP.
 
 ```mermaid
 flowchart TD
     subgraph Frontend Clients
-        W[Streamlit Web UI]
-        M[React Native Mobile App]
+        W[Streamlit Web UI (Thin Client)]
+        M[React Native Mobile App (Thin Client)]
     end
 
     subgraph Backend Services
-        F[FastAPI Server]
+        F[FastAPI Server (Heavy Server)]
         C[Core Python Logic / ECG Engine]
     end
 
@@ -23,72 +23,71 @@ flowchart TD
         FS[Local File Storage]
     end
 
-    W <--> C
+    W <--> F
     M <--> F
     F <--> C
     C <--> DB
     C <--> FS
 ```
 
-### 1.1 Core Engine & Web UI (`ECGComparisonPython.py`)
-This is the foundational layer of the system. It contains the core domain logic written in Python and uses Streamlit to render a Web UI.
+### 1.1 Thin Streamlit Web UI (`ECGComparisonPython.py`)
+The web application is a thin client presenting UI screens and components, completely decoupled from local databases or complex signal processing engines.
 * **Responsibilities:**
-  * **Preprocessing:** Denoising and contrast enhancement of uploaded ECG images (PNG/JPG/PDF).
-  * **Analysis:** Grid spacing detection, waveform digitization, and R-peak detection.
-  * **Feature Extraction:** Identifying P, Q, R, S, T indices and calculating clinical metrics (Heart Rate, PR interval, QRS duration, QT interval).
-  * **Comparison Engine:** Aligning two ECG waveforms using R-peak alignment or cross-correlation, and generating delta visualizations.
-  * **Streamlit UI:** Directly invokes core functions to provide a rich web-based GUI for researchers and clinicians.
+  * **User Experience:** Renders tab interfaces for analysis, comparisons, records browsing, settings, and user management.
+  * **API Requests Wrapper:** Communicates with the FastAPI server via HTTP `requests` for all calculations, grid spacing checks, and record saves.
+  * **Plot Rendering:** Displays waveforms and comparison overlays by fetching base64-encoded PNG strings compiled by the backend server.
 
-### 1.2 Mobile Backend API (`mobile_backend/main.py`)
-To extend the application to mobile users without duplicating complex signal processing logic, a lightweight FastAPI backend serves as an intermediary.
+### 1.2 Core ECG Engine (`analyzer.py` / `db.py` / `auth.py`)
+This is the foundational computing layer of the system, running on the server.
 * **Responsibilities:**
-  * **RESTful Endpoints:** Exposes the core Python logic over HTTP (e.g., uploading images, fetching records, comparing ECGs).
-  * **Authentication:** Implements a token-based authentication mechanism (HMAC-signed payload) to secure access.
-  * **Stateless Processing:** Processes requests, leverages the core engine for heavy lifting, and returns structured JSON responses and Base64-encoded Matplotlib figures for image rendering on the mobile client.
+  * **Preprocessing:** Denoising and contrast enhancement of ECG images.
+  * **Analysis & Feature Extraction:** Grid spacing detection, waveform digitization, peak landmark calculations (P, Q, R, S, T), and interval metrics.
+  * **Comparison Engine:** Temporal alignment of signal traces and delta estimations.
 
-### 1.3 Mobile Application (`mobile_app/`)
+### 1.3 Backend API Server (`mobile_backend/main.py`)
+A FastAPI backend that serves as the single source of truth for both web and mobile client frontends.
+* **Responsibilities:**
+  * **RESTful Endpoints:** Exposes the core Python logic over HTTP (e.g. image analysis, alignments, logging, exports, user CRUD).
+  * **Session Settings:** Exposes settings and user management actions to administrators.
+  * **Headless Plotting:** Builds Matplotlib figures on a headless engine and encodes outputs into Base64 PNGs for thin client rendering.
+
+### 1.4 Mobile Application (`mobile_app/`)
 A cross-platform mobile frontend built using React Native and Expo.
 * **Responsibilities:**
-  * **User Experience:** Provides a seamless interface tailored for mobile devices (smartphones/tablets).
-  * **Integration:** Communicates exclusively with the FastAPI backend.
-  * **Features:** Includes screens for Login, Uploading/Analyzing new ECGs, browsing past Records, and side-by-side Comparisons.
+  * **UX UI:** Offers mobile-friendly view workflows matching the REST backend.
 
 ## 2. Data Flow & Persistence
 
 The system uses a local-first persistence strategy to ensure data privacy and simple deployment.
 
 * **File Storage (`data/images/`):** When an ECG image is uploaded, it is deduplicated using SHA-256 hashing and stored securely on the local disk.
-* **Relational Database (`data/ecg.db`):** A SQLite database stores:
+* **Relational Database (`data/ecg.db`):** A SQLite database (Schema Version 3) stores:
   * Patient metadata and audit logs.
-  * Extracted features and metrics stored flexibly as JSON blobs (`ecg_records` table).
-  * Comparison results between two records (`ecg_comparisons` table).
+  * Calibration constants, digitized signals, features, and metrics in separate, structured database columns (`ecg_records` table).
+  * Comparison delta metrics between two records (`ecg_comparisons` table).
 
-### Sequence of an Analysis Request (Mobile)
+### Sequence of an Analysis Request
 
 ```mermaid
 sequenceDiagram
-    participant App as React Native App
+    participant App as Thin Client (Web/Mobile)
     participant API as FastAPI Backend
     participant Core as Core Engine (Python)
     participant DB as SQLite / Disk
 
-    App->>API: POST /analyze (Image File + Token)
-    API->>API: Validate Token
+    App->>API: POST /analyze (Image File)
     API->>Core: Invokes build_analysis()
     Core->>Core: Image Processing & Digitization
-    Core->>Core: Feature Extraction
-    Core->>DB: Save Image & JSON Results
-    DB-->>Core: Returns Record ID
+    Core->>Core: Feature Extraction & Metrics
     Core-->>API: Returns Metrics & Plots (Base64)
-    API-->>App: JSON Response (Metrics, Images, Record ID)
-    App->>App: Render Results on Screen
+    API-->>App: JSON Response (Metrics, Plot Base64)
+    App->>App: Render Base64 Image & Values
 ```
 
 ## 3. Extensibility & Security
 
-* **Modular Design:** The separation of the core mathematical processing engine from the Fast API server and Streamlit UI allows for easy swapping of frontends or upgrading the core logic (e.g., integrating deep learning for digitization in the future).
-* **Security:** Role-Based Access Control (RBAC) and audit logging are implemented in the core logic. Data is kept locally by default, addressing privacy concerns associated with medical records.
-* **Mobile Efficiency:** Instead of returning raw data arrays for the mobile app to plot (which could be computationally expensive and difficult to align perfectly), the backend renders Matplotlib figures and sends them as Base64 strings.
+* **decoupled Design:** The separation of the core processing from frontends ensures either side can be rewritten (e.g., upgrading to Next.js or deep learning) without impacting the rest.
+* **Security:** Audit logs and configurations are validated on the backend. Authentication is statefully validated via token signatures.
 
 ## 4. Database Schema
 
@@ -103,7 +102,21 @@ CREATE TABLE IF NOT EXISTS ecg_records (
     root_cause_time TEXT,
     image_filename TEXT NOT NULL,
     image_hash TEXT NOT NULL,
-    analysis_json TEXT NOT NULL,
+    ms_per_pixel REAL,
+    mV_per_pixel REAL,
+    pixels_per_mm REAL,
+    signal_mV TEXT,
+    time_ms TEXT,
+    p_peaks TEXT,
+    q_peaks TEXT,
+    r_peaks TEXT,
+    s_peaks TEXT,
+    t_peaks TEXT,
+    heart_rate_bpm REAL,
+    rr_intervals_ms TEXT,
+    pr_interval_ms REAL,
+    qrs_duration_ms REAL,
+    qt_interval_ms REAL,
     created_at TEXT NOT NULL
 );
 
@@ -112,7 +125,10 @@ CREATE TABLE IF NOT EXISTS ecg_comparisons (
     record_a_id INTEGER NOT NULL,
     record_b_id INTEGER NOT NULL,
     alignment_method TEXT,
-    delta_json TEXT NOT NULL,
+    heart_rate_bpm REAL,
+    pr_interval_ms REAL,
+    qrs_duration_ms REAL,
+    qt_interval_ms REAL,
     created_at TEXT NOT NULL,
     FOREIGN KEY(record_a_id) REFERENCES ecg_records(id) ON DELETE CASCADE,
     FOREIGN KEY(record_b_id) REFERENCES ecg_records(id) ON DELETE CASCADE

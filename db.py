@@ -302,7 +302,7 @@ class ECGDatabase:
     def seed_default_settings(self, conn: sqlite3.Connection) -> None:
         # Baseline settings keep functionality disabled until admins opt in.
         defaults = {
-            "user_management_enabled": "false",
+            "user_management_enabled": "true",
             "session_timeout_minutes": "30",
             "auth_mode": "local",
             "allow_patient_data_storage": "false",
@@ -617,6 +617,8 @@ class ECGDatabase:
                         os.remove(path)
                 except OSError:
                     pass
+
+        return True
 
 
 
