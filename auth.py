@@ -93,6 +93,19 @@ def reset_password(user_id: int, new_password: str) -> None:
 
 
 
+def delete_user(user_id: int) -> None:
+    # Reassign records to the default admin user and delete the user.
+    with sqlite3.connect(StoragePaths.current().db_path) as conn:
+        admin_row = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()
+        if admin_row:
+            admin_id = admin_row[0]
+            conn.execute("UPDATE ecg_records SET uploader_id = ? WHERE uploader_id = ?", (admin_id, user_id))
+        
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+
+
+
 def log_audit(event_type: str, outcome: str, user: dict | None = None, details: str | None = None) -> None:
     # Insert a row into audit_logs for security and traceability.
     with sqlite3.connect(StoragePaths.current().db_path) as conn:

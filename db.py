@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import functools
 
-DB_SCHEMA_VERSION = 3
+DB_SCHEMA_VERSION = 5
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 IMAGE_DIR = os.path.join(DATA_DIR, "images")
@@ -290,13 +290,255 @@ class ECGDatabase:
             except sqlite3.Error as e:
                 raise RuntimeError(f"Failed to migrate to schema version 3: {e}")
 
+        
+        # v3 -> v4: fully normalize array fields into relational tables
+        if current < 4:
+            try:
+                # Migrate ecg_records
+                cursor = conn.execute("PRAGMA table_info(ecg_records)")
+                has_signal_mv = any(row[1] == "signal_mV" for row in cursor.fetchall())
+                
+                if has_signal_mv:
+                    conn.execute("ALTER TABLE ecg_records RENAME TO ecg_records_v3")
+                    
+                    # Create new patients table (optional if we don't have existing, but let's just create it)
+                    conn.execute(
+                        '''
+                        CREATE TABLE IF NOT EXISTS patients (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            patient_identifier TEXT UNIQUE NOT NULL,
+                            created_at TEXT NOT NULL
+                        )
+                        '''
+                    )
+                    
+                    conn.execute(
+                        '''
+                        CREATE TABLE IF NOT EXISTS ecg_records (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            patient_id INTEGER,
+                            ecg_datetime TEXT,
+                            root_cause TEXT,
+                            root_cause_time TEXT,
+                            image_filename TEXT NOT NULL,
+                            image_hash TEXT NOT NULL,
+                            ms_per_pixel REAL,
+                            mV_per_pixel REAL,
+                            pixels_per_mm REAL,
+                            heart_rate_bpm REAL,
+                            pr_interval_ms REAL,
+                            qrs_duration_ms REAL,
+                            qt_interval_ms REAL,
+                            created_at TEXT NOT NULL,
+                            FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE
+                        )
+                        '''
+                    )
+                    
+                    conn.execute(
+                        '''
+                        CREATE TABLE IF NOT EXISTS ecg_signals (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            record_id INTEGER NOT NULL,
+                            time_ms REAL NOT NULL,
+                            signal_mV REAL NOT NULL,
+                            FOREIGN KEY(record_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+                        )
+                        '''
+                    )
+                    
+                    conn.execute(
+                        '''
+                        CREATE TABLE IF NOT EXISTS ecg_peaks (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            record_id INTEGER NOT NULL,
+                            peak_type TEXT NOT NULL CHECK(peak_type IN ('P', 'Q', 'R', 'S', 'T')),
+                            time_ms REAL NOT NULL,
+                            signal_mV REAL,
+                            FOREIGN KEY(record_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+                        )
+                        '''
+                    )
+                    
+                    conn.execute(
+                        '''
+                        CREATE TABLE IF NOT EXISTS ecg_rr_intervals (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            record_id INTEGER NOT NULL,
+                            sequence_order INTEGER NOT NULL,
+                            duration_ms REAL NOT NULL,
+                            FOREIGN KEY(record_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+                        )
+                        '''
+                    )
+                    
+                    # Import json for parsing
+                    import json
+                    
+                    cursor = conn.execute("SELECT * FROM ecg_records_v3")
+                    v3_columns = [desc[0] for desc in cursor.description]
+                    
+                    for row in cursor.fetchall():
+                        r = dict(zip(v3_columns, row))
+                        
+                        # Handle patients
+                        p_id = r.get("patient_id")
+                        patient_fk = None
+                        if p_id:
+                            # Insert or get patient
+                            patient_row = conn.execute("SELECT id FROM patients WHERE patient_identifier = ?", (p_id,)).fetchone()
+                            if patient_row:
+                                patient_fk = patient_row[0]
+                            else:
+                                cur = conn.execute("INSERT INTO patients (patient_identifier, created_at) VALUES (?, ?)", (p_id, r.get("created_at")))
+                                patient_fk = cur.lastrowid
+                        
+                        conn.execute(
+                            '''
+                            INSERT INTO ecg_records (
+                                id, patient_id, ecg_datetime, root_cause, root_cause_time,
+                                image_filename, image_hash, ms_per_pixel, mV_per_pixel, pixels_per_mm,
+                                heart_rate_bpm, pr_interval_ms, qrs_duration_ms, qt_interval_ms,
+                                created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''',
+                            (
+                                r.get("id"), patient_fk, r.get("ecg_datetime"), r.get("root_cause"), r.get("root_cause_time"),
+                                r.get("image_filename"), r.get("image_hash"), r.get("ms_per_pixel"), r.get("mV_per_pixel"), r.get("pixels_per_mm"),
+                                r.get("heart_rate_bpm"), r.get("pr_interval_ms"), r.get("qrs_duration_ms"), r.get("qt_interval_ms"),
+                                r.get("created_at")
+                            )
+                        )
+                        
+                        rec_id = r.get("id")
+                        
+                        # Parse signals
+                        signal_mv = json.loads(r.get("signal_mV") or "[]")
+                        time_ms = json.loads(r.get("time_ms") or "[]")
+                        if signal_mv and time_ms and len(signal_mv) == len(time_ms):
+                            conn.executemany(
+                                "INSERT INTO ecg_signals (record_id, time_ms, signal_mV) VALUES (?, ?, ?)",
+                                [(rec_id, t, s) for t, s in zip(time_ms, signal_mv)]
+                            )
+                        
+                        # Parse peaks
+                        for p_type, col_name in [("P", "p_peaks"), ("Q", "q_peaks"), ("R", "r_peaks"), ("S", "s_peaks"), ("T", "t_peaks")]:
+                            peaks = json.loads(r.get(col_name) or "[]")
+                            if peaks:
+                                conn.executemany(
+                                    "INSERT INTO ecg_peaks (record_id, peak_type, time_ms) VALUES (?, ?, ?)",
+                                    [(rec_id, p_type, t) for t in peaks]
+                                )
+                                
+                        # Parse RR intervals
+                        rr = json.loads(r.get("rr_intervals_ms") or "[]")
+                        if rr:
+                            conn.executemany(
+                                "INSERT INTO ecg_rr_intervals (record_id, sequence_order, duration_ms) VALUES (?, ?, ?)",
+                                [(rec_id, i, val) for i, val in enumerate(rr)]
+                            )
+                    
+                    conn.execute("DROP TABLE ecg_records_v3")
+                
+                # Migrate ecg_comparisons
+                comp_cursor = conn.execute("PRAGMA table_info(ecg_comparisons)")
+                has_hr_bpm = any(row[1] == "heart_rate_bpm" for row in comp_cursor.fetchall())
+                if has_hr_bpm:
+                    conn.execute("ALTER TABLE ecg_comparisons RENAME TO ecg_comparisons_v3")
+                    
+                    conn.execute(
+                        '''
+                        CREATE TABLE IF NOT EXISTS ecg_comparisons (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            record_a_id INTEGER NOT NULL,
+                            record_b_id INTEGER NOT NULL,
+                            alignment_method TEXT NOT NULL,
+                            created_at TEXT NOT NULL,
+                            FOREIGN KEY(record_a_id) REFERENCES ecg_records(id) ON DELETE CASCADE,
+                            FOREIGN KEY(record_b_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+                        )
+                        '''
+                    )
+                    
+                    conn.execute(
+                        '''
+                        CREATE TABLE IF NOT EXISTS comparison_metrics (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            comparison_id INTEGER NOT NULL,
+                            metric_name TEXT NOT NULL,
+                            metric_value REAL NOT NULL,
+                            FOREIGN KEY(comparison_id) REFERENCES ecg_comparisons(id) ON DELETE CASCADE
+                        )
+                        '''
+                    )
+                    
+                    conn.execute(
+                        '''
+                        CREATE TABLE IF NOT EXISTS comparison_peak_matches (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            comparison_id INTEGER NOT NULL,
+                            record_a_peak_id INTEGER NOT NULL,
+                            record_b_peak_id INTEGER NOT NULL,
+                            time_shift_ms REAL,
+                            FOREIGN KEY(comparison_id) REFERENCES ecg_comparisons(id) ON DELETE CASCADE,
+                            FOREIGN KEY(record_a_peak_id) REFERENCES ecg_peaks(id),
+                            FOREIGN KEY(record_b_peak_id) REFERENCES ecg_peaks(id)
+                        )
+                        '''
+                    )
+                    
+                    cursor = conn.execute("SELECT id, record_a_id, record_b_id, alignment_method, heart_rate_bpm, pr_interval_ms, qrs_duration_ms, qt_interval_ms, created_at FROM ecg_comparisons_v3")
+                    for row in cursor.fetchall():
+                        c_id, a_id, b_id, align_meth, hr, pr, qrs, qt, created = row
+                        # Some v3 rows might have NULL alignment_method if they were broken
+                        if not align_meth:
+                            align_meth = "unknown"
+                        conn.execute(
+                            "INSERT INTO ecg_comparisons (id, record_a_id, record_b_id, alignment_method, created_at) VALUES (?, ?, ?, ?, ?)",
+                            (c_id, a_id, b_id, align_meth, created)
+                        )
+                        
+                        metrics_to_insert = []
+                        if hr is not None: metrics_to_insert.append((c_id, "heart_rate_bpm", hr))
+                        if pr is not None: metrics_to_insert.append((c_id, "pr_interval_ms", pr))
+                        if qrs is not None: metrics_to_insert.append((c_id, "qrs_duration_ms", qrs))
+                        if qt is not None: metrics_to_insert.append((c_id, "qt_interval_ms", qt))
+                        
+                        if metrics_to_insert:
+                            conn.executemany("INSERT INTO comparison_metrics (comparison_id, metric_name, metric_value) VALUES (?, ?, ?)", metrics_to_insert)
+                            
+                    conn.execute("DROP TABLE ecg_comparisons_v3")
+                    
+                self.set_db_schema_version(conn, 4)
+            except sqlite3.Error as e:
+                raise RuntimeError(f"Failed to migrate to schema version 4: {e}")
+
         self.set_db_schema_version(conn, self._schema_version)
+
+        # v4 -> v5: add uploader_id to ecg_records
+        if current < 5:
+            try:
+                # Add uploader_id to ecg_records
+                cursor = conn.execute("PRAGMA table_info(ecg_records)")
+                has_uploader = any(row[1] == "uploader_id" for row in cursor.fetchall())
+                if not has_uploader:
+                    conn.execute("ALTER TABLE ecg_records ADD COLUMN uploader_id INTEGER REFERENCES users(id) ON DELETE SET NULL")
+                    # Assign existing records to the default admin user.
+                    admin_id_row = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()
+                    if admin_id_row:
+                        admin_id = admin_id_row[0]
+                        conn.execute("UPDATE ecg_records SET uploader_id = ?", (admin_id,))
+                self.set_db_schema_version(conn, 5)
+            except sqlite3.Error as e:
+                raise RuntimeError(f"Failed to migrate to schema version 5: {e}")
 
     def create_indexes(self, conn: sqlite3.Connection) -> None:
         # Helpful indexes for common queries in the UI.
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ecg_records_created_at ON ecg_records(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ecg_comparisons_record_a ON ecg_comparisons(record_a_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ecg_comparisons_record_b ON ecg_comparisons(record_b_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ecg_signals_record_time ON ecg_signals(record_id, time_ms)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ecg_peaks_record_type ON ecg_peaks(record_id, peak_type)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp)")
 
     def seed_default_settings(self, conn: sqlite3.Connection) -> None:
@@ -343,9 +585,18 @@ class ECGDatabase:
         with self.connect() as conn:
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS patients (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    patient_identifier TEXT UNIQUE NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS ecg_records (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    patient_id TEXT,
+                    patient_id INTEGER,
                     ecg_datetime TEXT,
                     root_cause TEXT,
                     root_cause_time TEXT,
@@ -354,19 +605,48 @@ class ECGDatabase:
                     ms_per_pixel REAL,
                     mV_per_pixel REAL,
                     pixels_per_mm REAL,
-                    signal_mV TEXT,
-                    time_ms TEXT,
-                    p_peaks TEXT,
-                    q_peaks TEXT,
-                    r_peaks TEXT,
-                    s_peaks TEXT,
-                    t_peaks TEXT,
                     heart_rate_bpm REAL,
-                    rr_intervals_ms TEXT,
                     pr_interval_ms REAL,
                     qrs_duration_ms REAL,
                     qt_interval_ms REAL,
-                    created_at TEXT NOT NULL
+                    uploader_id INTEGER,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE,
+                    FOREIGN KEY(uploader_id) REFERENCES users(id) ON DELETE SET NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ecg_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_id INTEGER NOT NULL,
+                    time_ms REAL NOT NULL,
+                    signal_mV REAL NOT NULL,
+                    FOREIGN KEY(record_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ecg_peaks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_id INTEGER NOT NULL,
+                    peak_type TEXT NOT NULL CHECK(peak_type IN ('P', 'Q', 'R', 'S', 'T')),
+                    time_ms REAL NOT NULL,
+                    signal_mV REAL,
+                    FOREIGN KEY(record_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ecg_rr_intervals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_id INTEGER NOT NULL,
+                    sequence_order INTEGER NOT NULL,
+                    duration_ms REAL NOT NULL,
+                    FOREIGN KEY(record_id) REFERENCES ecg_records(id) ON DELETE CASCADE
                 )
                 """
             )
@@ -391,14 +671,35 @@ class ECGDatabase:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     record_a_id INTEGER NOT NULL,
                     record_b_id INTEGER NOT NULL,
-                    alignment_method TEXT,
-                    heart_rate_bpm REAL,
-                    pr_interval_ms REAL,
-                    qrs_duration_ms REAL,
-                    qt_interval_ms REAL,
+                    alignment_method TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(record_a_id) REFERENCES ecg_records(id) ON DELETE CASCADE,
                     FOREIGN KEY(record_b_id) REFERENCES ecg_records(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS comparison_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    comparison_id INTEGER NOT NULL,
+                    metric_name TEXT NOT NULL,
+                    metric_value REAL NOT NULL,
+                    FOREIGN KEY(comparison_id) REFERENCES ecg_comparisons(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS comparison_peak_matches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    comparison_id INTEGER NOT NULL,
+                    record_a_peak_id INTEGER NOT NULL,
+                    record_b_peak_id INTEGER NOT NULL,
+                    time_shift_ms REAL,
+                    FOREIGN KEY(comparison_id) REFERENCES ecg_comparisons(id) ON DELETE CASCADE,
+                    FOREIGN KEY(record_a_peak_id) REFERENCES ecg_peaks(id),
+                    FOREIGN KEY(record_b_peak_id) REFERENCES ecg_peaks(id)
                 )
                 """
             )
@@ -481,7 +782,13 @@ class ECGDatabase:
         try:
             with sqlite3.connect(self._paths.db_path) as conn:
                 return pd.read_sql_query(
-                    "SELECT id, patient_id, ecg_datetime, created_at FROM ecg_records ORDER BY created_at DESC",
+                    """
+                    SELECT r.id, p.patient_identifier AS patient_id, r.ecg_datetime, r.created_at,
+                           r.heart_rate_bpm, r.pr_interval_ms, r.qrs_duration_ms
+                    FROM ecg_records r
+                    LEFT JOIN patients p ON r.patient_id = p.id
+                    ORDER BY r.created_at DESC
+                    """,
                     conn,
                 )
         except sqlite3.Error as e:
@@ -490,50 +797,73 @@ class ECGDatabase:
             raise RuntimeError(f"Failed to load records: {e}")
 
     def load_record(self, record_id: int) -> dict:
-        # Fetch a single record with its stored analysis payload.
+        # Fetch a single record with its stored analysis payload from normalized tables.
         try:
             with sqlite3.connect(self._paths.db_path) as conn:
                 cursor = conn.execute(
-                    "SELECT * FROM ecg_records WHERE id = ?",
+                    "SELECT r.*, p.patient_identifier FROM ecg_records r LEFT JOIN patients p ON r.patient_id = p.id WHERE r.id = ?",
                     (record_id,),
                 )
                 row = cursor.fetchone()
-            if not row:
-                return {}
-            columns = [description[0] for description in cursor.description]
-            data = dict(zip(columns, row))
+                if not row:
+                    return {}
+                columns = [description[0] for description in cursor.description]
+                data = dict(zip(columns, row))
+                
+                # Fetch signals
+                sig_rows = conn.execute("SELECT time_ms, signal_mV FROM ecg_signals WHERE record_id = ? ORDER BY time_ms", (record_id,)).fetchall()
+                time_ms = [r[0] for r in sig_rows]
+                signal_mv = [r[1] for r in sig_rows]
+                
+                # Fetch peaks
+                peak_rows = conn.execute("SELECT peak_type, time_ms FROM ecg_peaks WHERE record_id = ?", (record_id,)).fetchall()
+                p_peaks, q_peaks, r_peaks, s_peaks, t_peaks = [], [], [], [], []
+                for pt, t in peak_rows:
+                    if pt == 'P': p_peaks.append(int(t))
+                    elif pt == 'Q': q_peaks.append(int(t))
+                    elif pt == 'R': r_peaks.append(int(t))
+                    elif pt == 'S': s_peaks.append(int(t))
+                    elif pt == 'T': t_peaks.append(int(t))
+                    
+                # Fetch RR intervals
+                rr_rows = conn.execute("SELECT duration_ms FROM ecg_rr_intervals WHERE record_id = ? ORDER BY sequence_order", (record_id,)).fetchall()
+                rr_intervals_ms = [r[0] for r in rr_rows]
             
             # Reconstruct the nested analysis dictionary structure for compatibility
             analysis = {
                 "ms_per_pixel": data.get("ms_per_pixel"),
                 "mV_per_pixel": data.get("mV_per_pixel"),
                 "pixels_per_mm": data.get("pixels_per_mm"),
-                "signal_mV": json.loads(data.get("signal_mV")) if data.get("signal_mV") else [],
-                "time_ms": json.loads(data.get("time_ms")) if data.get("time_ms") else [],
+                "signal_mV": signal_mv,
+                "time_ms": time_ms,
                 "features": {
-                    "p_peaks": json.loads(data.get("p_peaks")) if data.get("p_peaks") else [],
-                    "q_peaks": json.loads(data.get("q_peaks")) if data.get("q_peaks") else [],
-                    "r_peaks": json.loads(data.get("r_peaks")) if data.get("r_peaks") else [],
-                    "s_peaks": json.loads(data.get("s_peaks")) if data.get("s_peaks") else [],
-                    "t_peaks": json.loads(data.get("t_peaks")) if data.get("t_peaks") else []
+                    "p_peaks": p_peaks,
+                    "q_peaks": q_peaks,
+                    "r_peaks": r_peaks,
+                    "s_peaks": s_peaks,
+                    "t_peaks": t_peaks
                 },
                 "metrics": {
                     "heart_rate_bpm": data.get("heart_rate_bpm"),
-                    "rr_intervals_ms": json.loads(data.get("rr_intervals_ms")) if data.get("rr_intervals_ms") else [],
+                    "rr_intervals_ms": rr_intervals_ms,
                     "pr_interval_ms": data.get("pr_interval_ms"),
                     "qrs_duration_ms": data.get("qrs_duration_ms"),
                     "qt_interval_ms": data.get("qt_interval_ms")
                 }
             }
+            # Put original string patient_id back if code expects it under patient_id key
+            if "patient_identifier" in data and data["patient_identifier"] is not None:
+                data["patient_id"] = data["patient_identifier"]
+                
             data["analysis"] = analysis
-            # Keep a serialized analysis_json representation in data if any code specifically looks for it
+            import json
             data["analysis_json"] = json.dumps(analysis)
             return data
-        except (sqlite3.Error, json.JSONDecodeError) as e:
+        except sqlite3.Error as e:
             raise RuntimeError(f"Failed to load record {record_id}: {e}")
 
     def save_record(self, metadata: dict, image_bytes: bytes, ext: str, analysis: dict) -> int:
-        # Persist metadata, image, and analysis results in a single row.
+        # Persist metadata, image, and analysis results to normalized schema.
         try:
             image_filename = self.save_image_bytes(image_bytes, ext)
             image_hash = self.compute_hash(image_bytes)
@@ -544,18 +874,28 @@ class ECGDatabase:
             metrics = analysis.get("metrics", {})
 
             with sqlite3.connect(self._paths.db_path) as conn:
+                # Handle patient
+                p_id_str = metadata.get("patient_id")
+                patient_fk = None
+                if p_id_str:
+                    patient_row = conn.execute("SELECT id FROM patients WHERE patient_identifier = ?", (p_id_str,)).fetchone()
+                    if patient_row:
+                        patient_fk = patient_row[0]
+                    else:
+                        p_cur = conn.execute("INSERT INTO patients (patient_identifier, created_at) VALUES (?, ?)", (p_id_str, created_at))
+                        patient_fk = p_cur.lastrowid
+
                 cur = conn.execute(
                     """
                     INSERT INTO ecg_records (
                         patient_id, ecg_datetime, root_cause, root_cause_time,
                         image_filename, image_hash, ms_per_pixel, mV_per_pixel, pixels_per_mm,
-                        signal_mV, time_ms, p_peaks, q_peaks, r_peaks, s_peaks, t_peaks,
-                        heart_rate_bpm, rr_intervals_ms, pr_interval_ms, qrs_duration_ms, qt_interval_ms,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        heart_rate_bpm, pr_interval_ms, qrs_duration_ms, qt_interval_ms,
+                        uploader_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        metadata.get("patient_id"),
+                        patient_fk,
                         metadata.get("ecg_datetime"),
                         metadata.get("root_cause"),
                         metadata.get("root_cause_time"),
@@ -564,23 +904,47 @@ class ECGDatabase:
                         analysis.get("ms_per_pixel"),
                         analysis.get("mV_per_pixel"),
                         analysis.get("pixels_per_mm"),
-                        json.dumps(analysis.get("signal_mV", [])),
-                        json.dumps(analysis.get("time_ms", [])),
-                        json.dumps(features.get("p_peaks", [])),
-                        json.dumps(features.get("q_peaks", [])),
-                        json.dumps(features.get("r_peaks", [])),
-                        json.dumps(features.get("s_peaks", [])),
-                        json.dumps(features.get("t_peaks", [])),
                         metrics.get("heart_rate_bpm"),
-                        json.dumps(metrics.get("rr_intervals_ms", [])),
                         metrics.get("pr_interval_ms"),
                         metrics.get("qrs_duration_ms"),
                         metrics.get("qt_interval_ms"),
+                        metadata.get("uploader_id"),
                         created_at,
                     ),
                 )
-                return cur.lastrowid
-        except (sqlite3.Error, OSError, json.JSONDecodeError) as e:
+                rec_id = cur.lastrowid
+                
+                # Insert signals
+                signal_mv = analysis.get("signal_mV", [])
+                time_ms = analysis.get("time_ms", [])
+                if signal_mv and time_ms and len(signal_mv) == len(time_ms):
+                    conn.executemany(
+                        "INSERT INTO ecg_signals (record_id, time_ms, signal_mV) VALUES (?, ?, ?)",
+                        [(rec_id, float(t), float(s)) for t, s in zip(time_ms, signal_mv)]
+                    )
+                
+                # Insert peaks
+                peaks_data = []
+                for p_type, col_name in [("P", "p_peaks"), ("Q", "q_peaks"), ("R", "r_peaks"), ("S", "s_peaks"), ("T", "t_peaks")]:
+                    peaks = features.get(col_name, [])
+                    if peaks:
+                        peaks_data.extend([(rec_id, p_type, float(t)) for t in peaks])
+                if peaks_data:
+                    conn.executemany(
+                        "INSERT INTO ecg_peaks (record_id, peak_type, time_ms) VALUES (?, ?, ?)",
+                        peaks_data
+                    )
+                
+                # Insert RR intervals
+                rr = metrics.get("rr_intervals_ms", [])
+                if rr:
+                    conn.executemany(
+                        "INSERT INTO ecg_rr_intervals (record_id, sequence_order, duration_ms) VALUES (?, ?, ?)",
+                        [(rec_id, i, float(val)) for i, val in enumerate(rr)]
+                    )
+
+                return rec_id
+        except (sqlite3.Error, OSError) as e:
             raise RuntimeError(f"Failed to save record: {e}")
 
     def delete_record(self, record_id: int) -> bool:

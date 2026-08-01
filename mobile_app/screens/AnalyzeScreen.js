@@ -156,6 +156,7 @@ export default function AnalyzeScreen({ route, navigation }) {
         ecg_datetime: ecgDatetime || new Date().toISOString(),
         root_cause: rootCause,
         root_cause_time: rootCauseTime,
+        uploader_id: user?.id || null,
       }));
       form.append('pixels_per_mm', '20.0');
       form.append('prominence', '0.5');

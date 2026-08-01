@@ -331,20 +331,23 @@ async def api_compare(record_a: int | None = Form(None), record_b: int | None = 
     if not a or not b:
         raise HTTPException(status_code=400, detail="Both analyses are required")
 
-    # Convert signals to numpy arrays for alignment
-    signal_a = np.array(a["signal_mV"]) if isinstance(a.get("signal_mV"), (list, np.ndarray)) else np.array(a["signal_mV"])
-    signal_b = np.array(b["signal_mV"]) if isinstance(b.get("signal_mV"), (list, np.ndarray)) else np.array(b["signal_mV"])
-    aligned_a, aligned_b, method = align_signals(signal_a, signal_b, a["features"]["r_peaks"], b["features"]["r_peaks"])
-    delta_metrics = comparison_metrics(a["metrics"], b["metrics"])
+    try:
+        signal_a = np.array(a["signal_mV"]) if isinstance(a.get("signal_mV"), (list, np.ndarray)) else np.array(a["signal_mV"])
+        signal_b = np.array(b["signal_mV"]) if isinstance(b.get("signal_mV"), (list, np.ndarray)) else np.array(b["signal_mV"])
+        aligned_a, aligned_b, method = align_signals(signal_a, signal_b, a["features"]["r_peaks"], b["features"]["r_peaks"])
+        delta_metrics = comparison_metrics(a["metrics"], b["metrics"])
 
-    # Return JSON-serializable payload with aligned arrays converted to lists
-    return JSONResponse(content={
-        "alignment_method": method,
-        "delta_metrics": delta_metrics,
-        "aligned_a": aligned_a.tolist(),
-        "aligned_b": aligned_b.tolist(),
-        "aligned_lengths": [len(aligned_a), len(aligned_b)],
-    })
+        return JSONResponse(content={
+            "alignment_method": method,
+            "delta_metrics": delta_metrics,
+            "aligned_a": aligned_a.tolist(),
+            "aligned_b": aligned_b.tolist(),
+            "aligned_lengths": [len(aligned_a), len(aligned_b)],
+        })
+    except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        return JSONResponse(content={"error": err}, status_code=500)
 
 
 @app.post("/export")
@@ -521,6 +524,15 @@ async def api_reset_password(user_id: int, password: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.delete("/users/{user_id}")
+async def api_delete_user(user_id: int):
+    """Delete a user and reassign their records."""
+    from auth import delete_user
+    try:
+        delete_user(user_id)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/audit_logs")
 async def api_list_audit_logs(limit: int = 200):

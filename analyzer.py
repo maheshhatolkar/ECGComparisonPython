@@ -277,11 +277,11 @@ class ECGAligner:
         """
         # Align by first R-peak if available, else use cross-correlation.
         if r_a and r_b:
-            shift = r_b[0] - r_a[0]
+            shift = int(round(float(r_b[0]) - float(r_a[0])))
             method = "r-peak"
         else:
             corr = np.correlate(signal_b - signal_b.mean(), signal_a - signal_a.mean(), mode="full")
-            shift = int(np.argmax(corr) - (len(signal_a) - 1))
+            shift = int(round(float(np.argmax(corr) - (len(signal_a) - 1))))
             method = "cross-correlation"
 
         if shift > 0:
@@ -290,7 +290,7 @@ class ECGAligner:
             aligned_b = signal_b[shift:]
         elif shift < 0:
             # Remove leading samples from signal_a.
-            aligned_a = signal_a[-shift:]
+            aligned_a = signal_a[abs(shift):]
             aligned_b = signal_b
         else:
             aligned_a = signal_a

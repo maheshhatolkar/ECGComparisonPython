@@ -259,15 +259,12 @@ def test_data_export_formatting(tmp_path):
     assert "ms_per_pixel" in df.columns
     assert "mV_per_pixel" in df.columns
     assert "pixels_per_mm" in df.columns
-    assert "signal_mV" in df.columns
-    assert "time_ms" in df.columns
-
     # Verify nested metrics
     assert "heart_rate_bpm" in df.columns
     assert df.loc[0, "heart_rate_bpm"] == 75.0
 
-    # Verify nested features
-    assert "r_peaks" in df.columns
+    # Verify nested features are no longer in ecg_records
+    assert "r_peaks" not in df.columns
 
     # 4. Verify full export runs successfully
     csv_files = data_export.export_all_tables_to_csv(paths=paths)

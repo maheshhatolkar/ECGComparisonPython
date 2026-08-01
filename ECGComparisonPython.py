@@ -17,7 +17,7 @@ import hashlib
 import db
 import auth
 
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
 
 def init_db(*args, **kwargs):
     try:
@@ -137,7 +137,9 @@ def align_and_compare_api(record_a=None, record_b=None, analysis_a=None, analysi
         st.error(f"Comparison API failed: {e}")
     return {}
 
-def metrics_table(metrics: dict) -> list:
+def metrics_table(metrics: dict | None) -> list:
+    if not isinstance(metrics, dict):
+        metrics = {}
     return [
         {"Parameter": "Heart Rate (bpm)", "Value": metrics.get("heart_rate_bpm")},
         {"Parameter": "PR Interval (ms)", "Value": metrics.get("pr_interval_ms")},
@@ -243,7 +245,7 @@ def create_user(username, display_name, role, password, enabled):
             "role": role,
             "password": password,
             "enabled": enabled
-        })
+        }, timeout=2)
     except Exception:
         pass
 
@@ -253,19 +255,19 @@ def update_user(user_id, display_name, role, enabled):
             "display_name": display_name,
             "role": role,
             "enabled": enabled
-        })
+        }, timeout=2)
     except Exception:
         pass
 
 def reset_password(user_id, password):
     try:
-        requests.post(f"{BACKEND_URL}/users/{user_id}/reset_password", data={"password": password})
+        requests.post(f"{BACKEND_URL}/users/{user_id}/reset_password", data={"password": password}, timeout=2)
     except Exception:
         pass
 
 def list_users() -> pd.DataFrame:
     try:
-        res = requests.get(f"{BACKEND_URL}/users")
+        res = requests.get(f"{BACKEND_URL}/users", timeout=2)
         if res.status_code == 200:
             return pd.DataFrame(res.json())
     except Exception:
@@ -274,7 +276,7 @@ def list_users() -> pd.DataFrame:
 
 def list_audit_logs(limit: int = 200) -> pd.DataFrame:
     try:
-        res = requests.get(f"{BACKEND_URL}/audit_logs", params={"limit": limit})
+        res = requests.get(f"{BACKEND_URL}/audit_logs", params={"limit": limit}, timeout=2)
         if res.status_code == 200:
             return pd.DataFrame(res.json())
     except Exception:
@@ -288,7 +290,7 @@ def log_audit(event_type: str, outcome: str, user: dict | None = None, details: 
             "outcome": outcome,
             "user_json": json.dumps(user) if user else "",
             "details": details or ""
-        })
+        }, timeout=2)
     except Exception:
         pass
 
@@ -312,13 +314,17 @@ def load_image_from_upload(uploaded_file):
         st.error("File is too large (max 10MB).")
         st.stop()
     filename = uploaded_file.name.lower()
-    if filename.endswith(".pdf"):
-        image = open_pdf_first_page(data)
-        ext = ".png"
-    else:
-        image = Image.open(io.BytesIO(data)).convert("RGB")
-        ext = os.path.splitext(filename)[1] or ".png"
-    return image, data, ext
+    try:
+        if filename.endswith(".pdf"):
+            image = open_pdf_first_page(data)
+            ext = ".png"
+        else:
+            image = Image.open(io.BytesIO(data)).convert("RGB")
+            ext = os.path.splitext(filename)[1] or ".png"
+        return image, data, ext
+    except Exception as e:
+        st.error(f"Unable to read file: {e}. Please upload a valid PNG, JPG, or PDF file.")
+        return None, None, None
 
 @st.cache_resource
 def _initialize_db():
@@ -490,6 +496,7 @@ def main():
                             "ecg_datetime": ecg_datetime,
                             "root_cause": root_cause,
                             "root_cause_time": root_cause_time,
+                            "uploader_id": st.session_state.get("user_id"),
                         }
                         record_id = save_record(
                             metadata,
@@ -515,12 +522,11 @@ def main():
                 records = load_records()
                 if records.empty:
                     st.info("No records available.")
-                    return None
+                    return None, f"ECG {label} (No records stored)"
 
                 # Build a display->id mapping for the selectbox
-                # Use a concise human-readable label so users can pick the right record.
                 record_map = {
-                    f"{int(row.id)} - {row.patient_id or ''} - {row.ecg_datetime or ''}": int(row.id)
+                    f"Record #{int(row.id)} ({row.patient_id or 'Anonymous'} - {row.ecg_datetime or 'No date'})": int(row.id)
                     for row in records.itertuples(index=False)
                 }
 
@@ -530,7 +536,8 @@ def main():
                     key=f"record_{label}",
                 )
                 record = load_record(record_map[selection])
-                return record.get("analysis")
+                return record.get("analysis"), selection
+
             upload = st.file_uploader(
                 f"Upload ECG {label}",
                 type=["png", "jpg", "jpeg", "pdf"],
@@ -547,7 +554,7 @@ def main():
                 image, image_bytes, ext = load_image_from_upload(selected_upload)
                 if image is None:
                     st.error("Unable to read the uploaded file.")
-                    return None
+                    return None, f"Uploaded ECG {label} ({selected_upload.name})"
                 grid_spacing = detect_grid_spacing_api(image_bytes)
                 manual_pixels_per_mm = st.slider(
                     f"Pixels per mm ({label})",
@@ -566,8 +573,8 @@ def main():
                     step=0.1,
                     key=f"prom_{label}",
                 )
-                return build_analysis_api(image_bytes, pixels_per_mm, prominence_factor)
-            return None
+                return build_analysis_api(image_bytes, pixels_per_mm, prominence_factor), f"Uploaded ECG {label} ({selected_upload.name})"
+            return None, f"Uploaded ECG {label} (No image selected)"
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -577,7 +584,7 @@ def main():
                 horizontal=True,
                 key="source_a",
             )
-            analysis_a = get_analysis_from_source("A", source_a)
+            analysis_a, info_a = get_analysis_from_source("A", source_a)
         with col_b:
             source_b = st.radio(
                 "Source for ECG B",
@@ -585,71 +592,86 @@ def main():
                 horizontal=True,
                 key="source_b",
             )
-            analysis_b = get_analysis_from_source("B", source_b)
+            analysis_b, info_b = get_analysis_from_source("B", source_b)
 
-        if analysis_a and analysis_b and st.button("Compare"):
-            comp_res = align_and_compare_api(analysis_a=analysis_a, analysis_b=analysis_b)
-            if comp_res:
-                method = comp_res.get("alignment_method")
-                st.write(f"Alignment method: {method}")
+        if st.button("Compare"):
+            valid_a = isinstance(analysis_a, dict) and bool(analysis_a.get("signal_mV"))
+            valid_b = isinstance(analysis_b, dict) and bool(analysis_b.get("signal_mV"))
 
-                # Fetch visual comparison plot
-                comp_plot = render_comparison_plot_api(comp_res["aligned_a"], comp_res["aligned_b"])
-                if comp_plot:
-                    st.image(comp_plot, caption="ECG Signals Comparison")
+            if not valid_a and not valid_b:
+                st.error(f"ECG Comparison failed: Both **{info_a}** and **{info_b}** do not contain valid analysis waveform data.")
+            elif not valid_a:
+                st.error(f"ECG Comparison failed: **{info_a}** does not contain valid analysis waveform data.")
+            elif not valid_b:
+                st.error(f"ECG Comparison failed: **{info_b}** does not contain valid analysis waveform data.")
+            else:
+                comp_res = align_and_compare_api(analysis_a=analysis_a, analysis_b=analysis_b)
+                if comp_res:
+                    method = comp_res.get("alignment_method")
+                    st.write(f"Alignment method: {method}")
 
-                # Calculate delta and fetch delta plot
-                aligned_a = np.array(comp_res["aligned_a"])
-                aligned_b = np.array(comp_res["aligned_b"])
-                delta = (aligned_b - aligned_a).tolist()
-                delta_plot = render_delta_plot_api(delta)
-                if delta_plot:
-                    st.image(delta_plot, caption="ECG Signals Delta (B - A)")
+                    # Fetch visual comparison plot
+                    aligned_a_list = comp_res.get("aligned_a", [])
+                    aligned_b_list = comp_res.get("aligned_b", [])
+                    comp_plot = render_comparison_plot_api(aligned_a_list, aligned_b_list)
+                    if comp_plot:
+                        st.image(comp_plot, caption="ECG Signals Comparison")
 
-                delta_metrics = comp_res.get("delta_metrics", {})
-            delta_df = pd.DataFrame(
-                [
-                    {
-                        "Metric": "Heart Rate (bpm)",
-                        "Delta": delta_metrics.get("heart_rate_bpm"),
-                    },
-                    {
-                        "Metric": "PR Interval (ms)",
-                        "Delta": delta_metrics.get("pr_interval_ms"),
-                    },
-                    {
-                        "Metric": "QRS Duration (ms)",
-                        "Delta": delta_metrics.get("qrs_duration_ms"),
-                    },
-                    {
-                        "Metric": "QT Interval (ms)",
-                        "Delta": delta_metrics.get("qt_interval_ms"),
-                    },
-                ]
-            )
-            st.dataframe(delta_df)
+                    # Calculate delta and fetch delta plot
+                    if aligned_a_list and aligned_b_list:
+                        aligned_a = np.array(aligned_a_list)
+                        aligned_b = np.array(aligned_b_list)
+                        delta = (aligned_b - aligned_a).tolist()
+                        delta_plot = render_delta_plot_api(delta)
+                        if delta_plot:
+                            st.image(delta_plot, caption="ECG Signals Delta (B - A)")
 
-            comparison_json = json.dumps(
-                {
-                    "alignment_method": method,
-                    "delta_metrics": delta_metrics,
-                },
-                indent=2,
-            )
-            st.download_button(
-                "Download Comparison JSON",
-                comparison_json,
-                file_name="ecg_comparison.json",
-                mime="application/json",
-                on_click=lambda: log_audit(
-                    "export_comparison",
-                    "success",
-                    {
-                        "id": st.session_state.get("user_id"),
-                        "username": st.session_state.get("username"),
-                    },
-                ),
-            )
+                    delta_metrics = comp_res.get("delta_metrics", {})
+                    delta_df = pd.DataFrame(
+                        [
+                            {
+                                "Metric": "Heart Rate (bpm)",
+                                "Delta": delta_metrics.get("heart_rate_bpm"),
+                            },
+                            {
+                                "Metric": "PR Interval (ms)",
+                                "Delta": delta_metrics.get("pr_interval_ms"),
+                            },
+                            {
+                                "Metric": "QRS Duration (ms)",
+                                "Delta": delta_metrics.get("qrs_duration_ms"),
+                            },
+                            {
+                                "Metric": "QT Interval (ms)",
+                                "Delta": delta_metrics.get("qt_interval_ms"),
+                            },
+                        ]
+                    )
+                    st.dataframe(delta_df)
+
+                    comparison_json = json.dumps(
+                        {
+                            "alignment_method": method,
+                            "delta_metrics": delta_metrics,
+                        },
+                        indent=2,
+                    )
+                    st.download_button(
+                        "Download Comparison JSON",
+                        comparison_json,
+                        file_name="ecg_comparison.json",
+                        mime="application/json",
+                        on_click=lambda: log_audit(
+                            "export_comparison",
+                            "success",
+                            {
+                                "id": st.session_state.get("user_id"),
+                                "username": st.session_state.get("username"),
+                            },
+                        ),
+                    )
+                else:
+                    st.error(f"ECG Comparison failed while aligning signals between **{info_a}** and **{info_b}**.")
 
     with tab_records:
         require_roles(["Administrator", "Clinician", "Researcher"])
@@ -796,88 +818,88 @@ def main():
                 st.success("Settings updated.")
 
             st.markdown("### Users")
-            users_df = list_users()
-            st.dataframe(users_df, use_container_width=True)
 
-            with st.expander("Create user"):
-                # Admin flow for adding new accounts.
-                new_username = st.text_input("Username", key="new_username")
-                new_display = st.text_input("Display name", key="new_display")
-                new_role = st.selectbox(
-                    "Role",
-                    ["Administrator", "Clinician", "Researcher"],
-                    index=2,
-                    key="new_role",
-                )
-                new_password = st.text_input("Password", type="password", key="new_password")
-                new_enabled = st.checkbox("Enabled", value=True, key="new_enabled")
-                if st.button("Create user"):
+            @st.dialog("Create New User")
+            def create_user_dialog():
+                new_username = st.text_input("Username")
+                new_display = st.text_input("Display name")
+                new_role = st.selectbox("Role", ["Administrator", "Clinician", "Researcher"], index=2)
+                new_password = st.text_input("Password", type="password")
+                confirm_password = st.text_input("Re-enter Password", type="password")
+                new_enabled = st.checkbox("Enabled", value=True)
+                if st.button("Save User", use_container_width=True):
                     if not new_username or not new_password:
                         st.error("Username and password are required.")
+                    elif new_password != confirm_password:
+                        st.error("Passwords do not match.")
                     else:
                         create_user(new_username, new_display, new_role, new_password, new_enabled)
-                        log_audit(
-                            "user_created",
-                            "success",
-                            {
-                                "id": st.session_state.get("user_id"),
-                                "username": st.session_state.get("username"),
-                            },
-                            f"user={new_username}",
-                        )
-                        st.success("User created.")
+                        log_audit("user_created", "success", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")}, f"user={new_username}")
                         st.rerun()
 
-            with st.expander("Update user"):
-                # Update existing user metadata and role assignments.
-                user_options = {f"{row.username} ({row.role})": row.id for row in users_df.itertuples(index=False)}
-                if user_options:
-                    selected_label = st.selectbox("Select user", list(user_options.keys()))
-                    selected_id = user_options[selected_label]
-                    selected_row = users_df[users_df["id"] == selected_id].iloc[0]
-                    upd_display = st.text_input("Display name", value=selected_row["display_name"] or "")
-                    upd_role = st.selectbox(
-                        "Role",
-                        ["Administrator", "Clinician", "Researcher"],
-                        index=["Administrator", "Clinician", "Researcher"].index(selected_row["role"]),
-                    )
-                    upd_enabled = st.checkbox("Enabled", value=bool(selected_row["enabled"]))
-                    if st.button("Update user"):
-                        update_user(selected_id, upd_display, upd_role, upd_enabled)
-                        log_audit(
-                            "user_updated",
-                            "success",
-                            {
-                                "id": st.session_state.get("user_id"),
-                                "username": st.session_state.get("username"),
-                            },
-                            f"user_id={selected_id}",
-                        )
-                        st.success("User updated.")
-                        st.rerun()
+            @st.dialog("Update User")
+            def update_user_dialog(user_row):
+                upd_display = st.text_input("Display name", value=user_row["display_name"] or "")
+                role_idx = ["Administrator", "Clinician", "Researcher"].index(user_row["role"]) if user_row["role"] in ["Administrator", "Clinician", "Researcher"] else 2
+                upd_role = st.selectbox("Role", ["Administrator", "Clinician", "Researcher"], index=role_idx)
+                upd_enabled = st.checkbox("Enabled", value=bool(user_row["enabled"]), help="Checked means user is enabled and allowed to perform operations")
+                if st.button("Update User", use_container_width=True):
+                    update_user(user_row["id"], upd_display, upd_role, upd_enabled)
+                    log_audit("user_updated", "success", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")}, f"user_id={user_row['id']}")
+                    if "user_editor" in st.session_state:
+                        del st.session_state["user_editor"]
+                    st.rerun()
 
-            with st.expander("Reset password"):
-                # Administrative password reset flow.
-                user_options = {f"{row.username}": row.id for row in users_df.itertuples(index=False)}
-                if user_options:
-                    selected_label = st.selectbox("Select user", list(user_options.keys()), key="reset_user")
-                    selected_id = user_options[selected_label]
-                    new_password = st.text_input("New password", type="password", key="reset_password")
-                    if st.button("Reset password"):
-                        if not new_password:
-                            st.error("Password is required.")
+            users_df = list_users()
+            if not users_df.empty:
+                users_df.insert(0, "Select", False)
+            
+            toolbar_container = st.container()
+            
+            selected_users = pd.DataFrame()
+            if not users_df.empty:
+                edited_df = st.data_editor(
+                    users_df,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Select": st.column_config.CheckboxColumn("Select", help="Select user", default=False)
+                    },
+                    disabled=["id", "username", "display_name", "role", "enabled", "created_at", "updated_at"],
+                    key="user_editor"
+                )
+                selected_users = edited_df[edited_df["Select"] == True]
+
+            has_selection = not selected_users.empty
+
+            with toolbar_container:
+                col_title, col_gap, col_btn1, col_btn2, col_btn3 = st.columns([0.7, 0.15, 0.05, 0.05, 0.05])
+                with col_btn1:
+                    if st.button("➕", help="Create new user"):
+                        create_user_dialog()
+                with col_btn2:
+                    if st.button("✏️", help="Edit selected user", disabled=not has_selection):
+                        if len(selected_users) > 1:
+                            st.warning("Select only one user to edit.")
                         else:
-                            reset_password(selected_id, new_password)
-                            log_audit(
-                                "password_reset",
-                                "success",
-                                {
-                                    "id": st.session_state.get("user_id"),
-                                    "username": st.session_state.get("username"),
-                            },
-                            f"user_id={selected_id}",
-                        )
-                        st.success("Password reset.")
+                            update_user_dialog(selected_users.iloc[0])
+                with col_btn3:
+                    if st.button("🗑️", help="Delete selected user(s)", disabled=not has_selection):
+                        for _, row in selected_users.iterrows():
+                            if row["username"] == "admin":
+                                st.error("Cannot delete the default admin account.")
+                                continue
+                            try:
+                                # We use direct function call to avoid requiring an API server restart
+                                import auth
+                                auth.delete_user(row["id"])
+                                log_audit("user_deleted", "success", {"id": st.session_state.get("user_id"), "username": st.session_state.get("username")}, f"user_id={row['id']}")
+                            except Exception as e:
+                                st.error(f"Failed to delete {row['username']}: {e}")
+                        st.success("Selected user(s) deleted and their records reassigned to admin.")
+                        if "user_editor" in st.session_state:
+                            del st.session_state["user_editor"]
+                        st.rerun()
 
             st.markdown("### Audit Logs")
             # Filterable audit log viewer.
