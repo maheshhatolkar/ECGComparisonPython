@@ -686,92 +686,86 @@ def main():
                 records["patient_id"] = records["patient_id"].apply(mask_patient_id)
 
             is_admin = is_user_management_enabled() and user_has_role(["Administrator"])
-            if is_admin:
-                # Admins get a selectable "Delete" column and a single Delete button.
-                editor_df = records.copy()
-                editor_df.insert(0, "Delete", False)
 
-                # Header row with a "Delete" button aligned to the Delete column.
-                head_cols = st.columns([1, 3, 3, 3, 6])
-                head_cols[0].write("")
-                head_cols[1].markdown("**id**")
-                head_cols[2].markdown("**patient_id**")
-                head_cols[3].markdown("**ecg_datetime**")
-                delete_clicked = head_cols[4].button("Delete", type="primary", key="delete_selected_records")
+            @st.dialog("View Record Details")
+            def view_record_dialog(record_id):
+                record = load_record(record_id)
+                analysis = record.get("analysis")
+                if analysis:
+                    st.write("**Graphical Format (Waveform)**")
+                    plot_bytes = render_signal_plot_api(analysis)
+                    if plot_bytes:
+                        st.image(plot_bytes, caption="ECG Waveform Analysis")
 
-                edited = st.data_editor(
-                    editor_df,
-                    use_container_width=True,
+                    st.write("**Tabular Format (Metrics)**")
+                    st.dataframe(metrics_table(analysis["metrics"]), use_container_width=True)
+                else:
+                    st.warning("No analysis data found for this record.")
+
+            records_df = records.copy()
+            if not records_df.empty:
+                records_df.insert(0, "Select", False)
+
+            toolbar_container = st.container()
+
+            selected_records = pd.DataFrame()
+            if not records_df.empty:
+                edited_df = st.data_editor(
+                    records_df,
                     hide_index=True,
-                    disabled=[col for col in editor_df.columns if col != "Delete"],
+                    use_container_width=True,
                     column_config={
-                        "Delete": st.column_config.CheckboxColumn(
-                            "",
-                            help="Check to mark this record for deletion.",
-                            default=False,
-                        ),
+                        "Select": st.column_config.CheckboxColumn("Select", help="Select record", default=False)
                     },
-                    key="records_table_editor",
+                    disabled=[col for col in records_df.columns if col != "Select"],
+                    key="records_table_editor"
                 )
+                selected_records = edited_df[edited_df["Select"] == True]
 
-                if delete_clicked:
-                    # Require explicit confirmation before deletion.
-                    selected_ids = edited.loc[edited["Delete"] == True, "id"].tolist()  # noqa: E712
-                    if not selected_ids:
-                        st.warning("No records selected.")
-                    else:
-                        confirm = st.checkbox(
-                            "I understand this permanently deletes the selected record(s)",
-                            key="delete_selected_confirm",
-                        )
-                        if not confirm:
-                            st.stop()
-                        deleted_count = 0
-                        missing_count = 0
-                        for record_id in selected_ids:
-                            if delete_record(int(record_id)):
-                                deleted_count += 1
-                            else:
-                                missing_count += 1
-                        log_audit(
-                            "record_deleted",
-                            "success" if missing_count == 0 else "partial",
-                            {
-                                "id": st.session_state.get("user_id"),
-                                "username": st.session_state.get("username"),
-                            },
-                            f"record_ids={selected_ids}",
-                        )
-                        st.success(f"Deleted {deleted_count} record(s).")
-                        if missing_count:
-                            st.warning(f"{missing_count} record(s) were not found (already deleted?).")
-                        st.rerun()
-            else:
-                st.dataframe(records, use_container_width=True)
-                if is_user_management_enabled() and not user_has_role(["Administrator"]):
-                    st.info("Only Administrators can delete records.")
+            has_selection = not selected_records.empty
 
-            st.divider()
-            st.subheader("View Record Details")
-            record_map = {
-                f"{int(row.id)} - {row.patient_id or ''} - {row.ecg_datetime or ''}": int(row.id)
-                for row in records.itertuples(index=False)
-            }
-            if record_map:
-                selected_label = st.selectbox("Select record to view", list(record_map.keys()), key="view_record_select")
-                if st.button("View Record"):
-                    record = load_record(record_map[selected_label])
-                    analysis = record.get("analysis")
-                    if analysis:
-                        st.write("**Graphical Format (Waveform)**")
-                        plot_bytes = render_signal_plot_api(analysis)
-                        if plot_bytes:
-                            st.image(plot_bytes, caption="ECG Waveform Analysis")
+            with toolbar_container:
+                if is_admin:
+                    col_title, col_gap, col_btn1, col_btn2 = st.columns([0.7, 0.2, 0.05, 0.05])
+                else:
+                    col_title, col_gap, col_btn1 = st.columns([0.7, 0.25, 0.05])
 
-                        st.write("**Tabular Format (Metrics)**")
-                        st.dataframe(metrics_table(analysis["metrics"]), use_container_width=True)
-                    else:
-                        st.warning("No analysis data found for this record.")
+                with col_btn1:
+                    if st.button("👀", help="View selected record", disabled=not has_selection):
+                        if len(selected_records) > 1:
+                            st.warning("Select only one record to view.")
+                        else:
+                            view_record_dialog(int(selected_records.iloc[0]["id"]))
+                
+                if is_admin:
+                    with col_btn2:
+                        if st.button("🗑️", help="Delete selected record(s)", disabled=not has_selection):
+                            selected_ids = selected_records["id"].tolist()
+                            deleted_count = 0
+                            missing_count = 0
+                            for record_id in selected_ids:
+                                if delete_record(int(record_id)):
+                                    deleted_count += 1
+                                else:
+                                    missing_count += 1
+                            log_audit(
+                                "record_deleted",
+                                "success" if missing_count == 0 else "partial",
+                                {
+                                    "id": st.session_state.get("user_id"),
+                                    "username": st.session_state.get("username"),
+                                },
+                                f"record_ids={selected_ids}",
+                            )
+                            st.success(f"Deleted {deleted_count} record(s).")
+                            if missing_count:
+                                st.warning(f"{missing_count} record(s) were not found (already deleted?).")
+                            if "records_table_editor" in st.session_state:
+                                del st.session_state["records_table_editor"]
+                            st.rerun()
+
+            if not is_admin and is_user_management_enabled():
+                st.info("Only Administrators can delete records.")
 
     if tab_admin_obj:
         with tab_admin_obj:
